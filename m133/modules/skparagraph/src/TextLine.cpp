@@ -420,7 +420,8 @@ void TextLine::paint(ParagraphPainter* painter, SkScalar x, SkScalar y) {
 
 #ifdef ENABLE_TEXT_ENHANCE
 bool TextLine::hasBackgroundRect(const RoundRectAttr& attr) {
-    return attr.roundRectStyle.color != 0 && attr.rect.width() > 0;
+    bool hasBorder = attr.roundRectStyle.borderWidth > 0 && attr.roundRectStyle.borderColor != 0;
+    return (attr.roundRectStyle.color != 0 || hasBorder) && attr.rect.width() > 0;
 }
 
 void TextLine::computeRoundRect(int& index, int& preIndex, std::vector<Run*>& groupRuns, Run* run) {
@@ -1006,7 +1007,8 @@ void TextLine::paintBackground(ParagraphPainter* painter,
 #ifdef ENABLE_TEXT_ENHANCE
 void TextLine::paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y) const {
     for (const RoundRectAttr& attr : fRoundRectAttrs) {
-        if (attr.roundRectStyle.color == 0) {
+        bool hasBorder = attr.roundRectStyle.borderWidth > 0 && attr.roundRectStyle.borderColor != 0;
+        if (attr.roundRectStyle.color == 0 && !hasBorder) {
             continue;
         }
         const Run* run = attr.run;
@@ -1031,7 +1033,8 @@ void TextLine::paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y)
         SkRRect skRRect;
         skRRect.setRectRadii(skRect, radii);
         skRRect.offset(x + this->offset().x(), y + this->offset().y());
-        painter->drawRRect(skRRect, attr.roundRectStyle.color);
+        painter->drawRRectWithBorder(skRRect, attr.roundRectStyle.color,
+            attr.roundRectStyle.borderColor, attr.roundRectStyle.borderWidth);
     }
 }
 #endif

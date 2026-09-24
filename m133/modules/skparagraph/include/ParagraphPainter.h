@@ -53,6 +53,12 @@ public:
     virtual void drawTextShadow(
         const std::shared_ptr<RSTextBlob>& blob, SkScalar x, SkScalar y, SkColor color, SkScalar blurSigma) = 0;
     virtual void drawRRect(const SkRRect& rrect, const SkColor color) = 0;
+    // Draws the rounded rect with an optional border; the default impl falls back to fill-only
+    virtual void drawRRectWithBorder(const SkRRect& rrect, const SkColor fillColor, const SkColor borderColor,
+        const SkScalar borderWidth)
+    {
+        drawRRect(rrect, fillColor);
+    }
     virtual void drawPath(const RSPath& path, const DecorationStyle& decorStyle) = 0;
 #else
     virtual void drawTextBlob(const sk_sp<SkTextBlob>& blob, SkScalar x, SkScalar y, const SkPaintOrID& paint) = 0;
