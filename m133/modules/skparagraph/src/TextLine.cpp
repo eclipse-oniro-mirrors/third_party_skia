@@ -1006,35 +1006,58 @@ void TextLine::paintBackground(ParagraphPainter* painter,
 
 #ifdef ENABLE_TEXT_ENHANCE
 void TextLine::paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y) const {
-    for (const RoundRectAttr& attr : fRoundRectAttrs) {
-        bool hasBorder = attr.roundRectStyle.borderWidth > 0 && attr.roundRectStyle.borderColor != 0;
-        if (attr.roundRectStyle.color == 0 && !hasBorder) {
+    // One background box follows one textStyle: consecutive attrs sharing the same styleId and the
+    // same RectStyle are merged into one complete rounded rect on this line. A style whose text
+    // wraps onto another line is painted as a new independent rect by that line's painting pass.
+    int attrCount = static_cast<int>(fRoundRectAttrs.size());
+    int startIndex = 0;
+    while (startIndex < attrCount) {
+        if (!hasBackgroundRect(fRoundRectAttrs[startIndex])) {
+            ++startIndex;
             continue;
         }
-        const Run* run = attr.run;
+        const RoundRectAttr& startAttr = fRoundRectAttrs[startIndex];
+        int endIndex = startIndex;
+        while (endIndex + 1 < attrCount && hasBackgroundRect(fRoundRectAttrs[endIndex + 1]) &&
+               fRoundRectAttrs[endIndex + 1].styleId == startAttr.styleId &&
+               fRoundRectAttrs[endIndex + 1].roundRectStyle == startAttr.roundRectStyle) {
+            ++endIndex;
+        }
 
-        SkScalar ltRadius = 0.0f;
-        SkScalar rtRadius = 0.0f;
-        SkScalar rbRadius = 0.0f;
-        SkScalar lbRadius = 0.0f;
-        RoundRectType rType = attr.fRoundRectType;
-        if (rType == RoundRectType::ALL || rType == RoundRectType::LEFT_ONLY) {
-            ltRadius = std::fmin(attr.roundRectStyle.leftTopRadius, run->getMaxRoundRectRadius());
-            lbRadius = std::fmin(attr.roundRectStyle.leftBottomRadius, run->getMaxRoundRectRadius());
+        // Union of the group clips: horizontal span covers every attr, vertical span takes the
+        // min top and max bottom so the merged box keeps a uniform height across all runs.
+        SkScalar left = startAttr.rect.left();
+        SkScalar right = startAttr.rect.right();
+        SkScalar top = startAttr.rect.top();
+        SkScalar bottom = startAttr.rect.bottom();
+        for (int index = startIndex + 1; index <= endIndex; ++index) {
+            const SkRect& rect = fRoundRectAttrs[index].rect;
+            left = std::fmin(left, rect.left());
+            right = std::fmax(right, rect.right());
+            top = std::fmin(top, rect.top());
+            bottom = std::fmax(bottom, rect.bottom());
         }
-        if (rType == RoundRectType::ALL || rType == RoundRectType::RIGHT_ONLY) {
-            rtRadius = std::fmin(attr.roundRectStyle.rightTopRadius, run->getMaxRoundRectRadius());
-            rbRadius = std::fmin(attr.roundRectStyle.rightBottomRadius, run->getMaxRoundRectRadius());
-        }
+
+        const RectStyle& rectStyle = startAttr.roundRectStyle;
+        // Every radius is clamped into [0, half of the smaller side] so the complete box stays valid.
+        SkScalar maxRadius = std::fmax(std::fmin(right - left, bottom - top) / 2, 0.0f);
+        auto clampRadius = [maxRadius](SkScalar radius) {
+            return std::fmin(std::fmax(radius, 0.0f), maxRadius);
+        };
+        SkScalar ltRadius = clampRadius(rectStyle.leftTopRadius);
+        SkScalar rtRadius = clampRadius(rectStyle.rightTopRadius);
+        SkScalar rbRadius = clampRadius(rectStyle.rightBottomRadius);
+        SkScalar lbRadius = clampRadius(rectStyle.leftBottomRadius);
         const SkVector radii[4] = {
             {ltRadius, ltRadius}, {rtRadius, rtRadius}, {rbRadius, rbRadius}, {lbRadius, lbRadius}};
-        SkRect skRect(
-            SkRect::MakeLTRB(attr.rect.left(), run->getTopInGroup(), attr.rect.right(), run->getBottomInGroup()));
+        SkRect skRect(SkRect::MakeLTRB(left, top, right, bottom));
         SkRRect skRRect;
         skRRect.setRectRadii(skRect, radii);
         skRRect.offset(x + this->offset().x(), y + this->offset().y());
-        painter->drawRRectWithBorder(skRRect, attr.roundRectStyle.color,
-            attr.roundRectStyle.borderColor, attr.roundRectStyle.borderWidth);
+        painter->drawRRectWithBorder(
+            skRRect, rectStyle.color, rectStyle.borderColor, rectStyle.borderWidth);
+
+        startIndex = endIndex + 1;
     }
 }
 #endif
