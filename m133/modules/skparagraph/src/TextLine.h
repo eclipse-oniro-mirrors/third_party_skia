@@ -378,7 +378,7 @@ private:
 #ifdef ENABLE_TEXT_ENHANCE
     void paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y) const;
     void spacingCluster(const Cluster* cluster, SkScalar spacing, SkScalar prevSpacing);
-    bool hasBackgroundRect(const RoundRectAttr& attr);
+    bool hasBackgroundRect(const RoundRectAttr& attr) const;
     void computeRoundRect(int& index, int& preIndex, std::vector<Run*>& groupRuns, Run* run);
     void prepareRoundRect();
     SkScalar calculateThickness(const TextStyle& style, const ClipContext& context);

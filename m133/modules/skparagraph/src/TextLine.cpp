@@ -419,7 +419,7 @@ void TextLine::paint(ParagraphPainter* painter, SkScalar x, SkScalar y) {
 }
 
 #ifdef ENABLE_TEXT_ENHANCE
-bool TextLine::hasBackgroundRect(const RoundRectAttr& attr) {
+bool TextLine::hasBackgroundRect(const RoundRectAttr& attr) const {
     bool hasBorder = attr.roundRectStyle.borderWidth > 0 && attr.roundRectStyle.borderColor != 0;
     return (attr.roundRectStyle.color != 0 || hasBorder) && attr.rect.width() > 0;
 }
@@ -1012,11 +1012,12 @@ void TextLine::paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y)
     int attrCount = static_cast<int>(fRoundRectAttrs.size());
     int startIndex = 0;
     while (startIndex < attrCount) {
-        if (!hasBackgroundRect(fRoundRectAttrs[startIndex])) {
+        const RoundRectAttr& startAttr = fRoundRectAttrs[startIndex];
+        if (!hasBackgroundRect(startAttr)) {
             ++startIndex;
             continue;
         }
-        const RoundRectAttr& startAttr = fRoundRectAttrs[startIndex];
+
         int endIndex = startIndex;
         while (endIndex + 1 < attrCount && hasBackgroundRect(fRoundRectAttrs[endIndex + 1]) &&
                fRoundRectAttrs[endIndex + 1].styleId == startAttr.styleId &&
