@@ -205,6 +205,9 @@ ParagraphImpl::ParagraphImpl(const SkString& text,
         , fTrailingSpaces(0)
 {
     SkASSERT(fUnicode);
+#ifdef ENABLE_TEXT_ENHANCE
+    this->detectTabCharacter();
+#endif
 }
 
 ParagraphImpl::ParagraphImpl(const std::u16string& utf16text,
@@ -222,6 +225,9 @@ ParagraphImpl::ParagraphImpl(const std::u16string& utf16text,
 {
     SkASSERT(fUnicode);
     fText =  SkUnicode::convertUtf16ToUtf8(utf16text);
+#ifdef ENABLE_TEXT_ENHANCE
+    this->detectTabCharacter();
+#endif
 }
 
 ParagraphImpl::~ParagraphImpl() = default;
@@ -3225,6 +3231,9 @@ size_t ParagraphImpl::prefixByteCountUntilChar(size_t index) {
 
 void ParagraphImpl::copyProperties(const ParagraphImpl& source) {
     fText = source.fText;
+#ifdef ENABLE_TEXT_ENHANCE
+    fHasTabCharacter = source.fHasTabCharacter;
+#endif
     fTextStyles = source.fTextStyles;
     fPlaceholders = source.fPlaceholders;
     fParagraphStyle = source.fParagraphStyle;
@@ -3277,6 +3286,17 @@ void ParagraphImpl::initUnicodeText() {
     this->fUnicodeText = convertUtf8ToUnicode(fText);
 }
 
+void ParagraphImpl::detectTabCharacter()
+{
+    fHasTabCharacter = false;
+    for (size_t i = 0; i < fText.size(); ++i) {
+        if (fText[i] == '\t') {
+            fHasTabCharacter = true;
+            return;
+        }
+    }
+}
+
 // Currently, only support to generate text and text shadow paint regions.
 // Can't accurately calculate the paint region of italic fonts(including fake italic).
 SkIRect ParagraphImpl::generatePaintRegion(SkScalar x, SkScalar y) {
@@ -3326,6 +3346,9 @@ std::unique_ptr<Paragraph> ParagraphImpl::CloneSelf()
     paragraph->fTextStyles = this->fTextStyles;
     paragraph->fPlaceholders = this->fPlaceholders;
     paragraph->fText = this->fText;
+#ifdef ENABLE_TEXT_ENHANCE
+    paragraph->fHasTabCharacter = this->fHasTabCharacter;
+#endif
 
     paragraph->fState = this->fState;
     paragraph->fRuns = this->fRuns;

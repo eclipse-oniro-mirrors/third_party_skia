@@ -358,6 +358,9 @@ public:
     bool isAutoSpaceEnabled() const;
     SkScalar clusterUsingAutoSpaceWidth(const Cluster& cluster) const;
     const SkString& getText() const { return fText; }
+#ifdef ENABLE_TEXT_ENHANCE
+    bool hasTabCharacter() const { return fHasTabCharacter; }
+#endif
     void includeFontPadding(
         bool isFirstLine, bool isLastLine, InternalLineMetrics& metrics, const TextRange& textRange);
     void updateSplitRunClusterInfo(const Run& run, bool isSplitRun);
@@ -470,6 +473,7 @@ public:
     bool computeCodeUnitProperties();
 #ifdef ENABLE_TEXT_ENHANCE
     void processCodeUnitsWithEnhancements();
+    void detectTabCharacter();
 #endif
     void applySpacingAndBuildClusterTable();
     void buildClusterTable();
@@ -655,6 +659,9 @@ private:
     skia_private::TArray<Block, true> fTextStyles; // TODO: take out only the font stuff
     skia_private::TArray<Placeholder, true> fPlaceholders;
     SkString fText;
+#ifdef ENABLE_TEXT_ENHANCE
+    bool fHasTabCharacter{false};
+#endif
 
     // Internal structures
     InternalState fState;
