@@ -568,11 +568,9 @@ void ParagraphCache::SetStoredLayoutImpl(ParagraphImpl& paragraph, ParagraphCach
 
 bool ParagraphCache::GetStoredLayout(ParagraphImpl& paragraph) {
     TEXT_TRACE_FUNC();
-    if (paragraph.hasTabCharacter()) {
-        return false;
-    }
     SkAutoMutexExclusive lock(fParagraphMutex);
-    if (paragraph.getParagraphStyle().getCompressHeadPunctuation() ||
+    if (paragraph.hasTabCharacter() ||
+        paragraph.getParagraphStyle().getCompressHeadPunctuation() ||
         paragraph.getParagraphStyle().getVerticalAlignment() != TextVerticalAlign::BASELINE) {
         return false;
     }
@@ -708,9 +706,6 @@ ParagraphCacheValue* ParagraphCache::cacheLayout(ParagraphImpl* paragraph) {
     }
 
     if (!canBeCached(paragraph)) {
-        return nullptr;
-    }
-    if (paragraph->hasTabCharacter()) {
         return nullptr;
     }
 #ifdef PARAGRAPH_CACHE_STATS
