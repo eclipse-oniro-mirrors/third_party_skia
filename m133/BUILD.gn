@@ -269,6 +269,12 @@ config("skia_library") {
   defines = [ "SKIA_IMPLEMENTATION=1" ]
 }
 
+config("skia_pac_ret") {
+  if (current_cpu == "arm64" && is_ohos) {
+    cflags = [ "-mbranch-protection=pac-ret+b-key" ]
+  }
+}
+
 skia_library_configs = [
   ":skia_public",
   ":skia_private",
