@@ -260,6 +260,9 @@ assert(!skia_use_perfetto || !skia_android_framework_use_perfetto)
 # These will be applied by the 'skia_*' templates.
 # In the Skia build these configs apply many warnings as errors.
 # Other projects may optionally set these configs as they see fit.
+skia_target_default_configs = [
+  "${skia_root_dir}:skia_pac_ret",
+]
 template("component") {
   _component_mode = "static_library"
   if (is_arkui_x) {
@@ -287,7 +290,10 @@ set_defaults("component") {
   } else {
     configs = default_shared_library_configs
   }
-  configs += [ "${skia_root_dir}:skia_wno" ]
+  configs += [
+    "${skia_root_dir}:skia_wno",
+    "${skia_root_dir}:skia_pac_ret",
+  ]
 }
 
 template("skia_target") {
@@ -299,7 +305,9 @@ template("skia_target") {
 
     # Explicit configs instead of set_defaults("skia_target")
     # Allows template("skia_*") below to avoid the configs dance.
-    if (defined(skia_target_default_configs)) {
+    # Skip for "component" type — set_defaults("component") already adds
+    # skia_pac_ret, so adding it here too would cause a duplicate config error.
+    if (defined(skia_target_default_configs) && invoker._skia_target_type != "component") {
       configs += skia_target_default_configs
     }
 

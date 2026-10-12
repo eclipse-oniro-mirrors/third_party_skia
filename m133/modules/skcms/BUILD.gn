@@ -82,6 +82,7 @@ arch("skcms_TransformSkx") {
 
 static_library("skcms") {
   cflags = []
+  configs += [ "../../:skia_pac_ret" ]
 
   if (target_cpu != "x64" || target_os == "android") {
     defines = [
