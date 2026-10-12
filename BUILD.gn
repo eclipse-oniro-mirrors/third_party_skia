@@ -137,6 +137,7 @@ if (is_arkui_x) {
     "${skia_root_dir}:skia_public",
     "${skia_root_dir}:skia_private",
     "${skia_root_dir}:skia_library",
+    "${skia_root_dir}:skia_pac_ret",
   ]
 
   config("skia_canvaskit_link_config") {
