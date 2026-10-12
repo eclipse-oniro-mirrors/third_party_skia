@@ -169,6 +169,8 @@ void ParagraphCacheKey::computeHashMix(uint32_t& hash) const {
     hash = mix(hash, SkGoodHash()(relax(fParagraphStyle.getHeight())));
     hash = mix(hash, SkGoodHash()(fParagraphStyle.getTextDirection()));
     hash = mix(hash, SkGoodHash()(fParagraphStyle.getReplaceTabCharacters() ? 1 : 0));
+    hash = mix(hash, SkGoodHash()(fParagraphStyle.getTextTab().alignment));
+    hash = mix(hash, SkGoodHash()(relax(fParagraphStyle.getTextTab().location)));
 
     hash = mix(hash, SkGoodHash()(fParagraphStyle.getTextHeightBehavior()));
     hash = mix(hash, SkGoodHash()(relax(fParagraphStyle.getParagraphSpacing())));
@@ -368,6 +370,9 @@ bool ParagraphCacheKey::operator==(const ParagraphCacheKey& other) const {
     }
 
 #ifdef ENABLE_TEXT_ENHANCE
+    if (!(fParagraphStyle.getTextTab() == other.fParagraphStyle.getTextTab())) {
+        return false;
+    }
     if (fParagraphStyle.getDisableSpacingForControlChar() != other.fParagraphStyle.getDisableSpacingForControlChar()) {
         return false;
     }
@@ -501,7 +506,8 @@ bool ParagraphCache::useCachedLayout(const ParagraphImpl& paragraph, const Parag
 
 void ParagraphCache::SetStoredLayout(ParagraphImpl& paragraph) {
     SkAutoMutexExclusive lock(fParagraphMutex);
-    if (paragraph.getParagraphStyle().getCompressHeadPunctuation() ||
+    if (paragraph.hasTabCharacter() ||
+        paragraph.getParagraphStyle().getCompressHeadPunctuation() ||
         paragraph.getParagraphStyle().getVerticalAlignment() != TextVerticalAlign::BASELINE) {
         return;
     }
@@ -563,7 +569,8 @@ void ParagraphCache::SetStoredLayoutImpl(ParagraphImpl& paragraph, ParagraphCach
 bool ParagraphCache::GetStoredLayout(ParagraphImpl& paragraph) {
     TEXT_TRACE_FUNC();
     SkAutoMutexExclusive lock(fParagraphMutex);
-    if (paragraph.getParagraphStyle().getCompressHeadPunctuation() ||
+    if (paragraph.hasTabCharacter() ||
+        paragraph.getParagraphStyle().getCompressHeadPunctuation() ||
         paragraph.getParagraphStyle().getVerticalAlignment() != TextVerticalAlign::BASELINE) {
         return false;
     }
@@ -614,6 +621,9 @@ bool ParagraphCache::GetStoredLayout(ParagraphImpl& paragraph) {
 bool ParagraphCache::findParagraph(ParagraphImpl* paragraph) {
 #ifdef ENABLE_TEXT_ENHANCE
     TEXT_TRACE_FUNC();
+    if (paragraph->hasTabCharacter()) {
+        return false;
+    }
 #endif
     if (!fCacheIsOn) {
         return false;
@@ -651,6 +661,9 @@ bool ParagraphCache::updateParagraph(ParagraphImpl* paragraph) {
     }
 
 #ifdef ENABLE_TEXT_ENHANCE
+    if (paragraph->hasTabCharacter()) {
+        return false;
+    }
     if (!canBeCached(paragraph)) {
         return false;
     }
