@@ -105,6 +105,9 @@ template("third_party") {
       } else {
         cflags += [ "-w" ]
       }
+      if (current_cpu == "arm64" && is_ohos) {
+        configs += [ "//third_party/skia/m133:skia_pac_ret" ]
+      }
     }
   }
 }
