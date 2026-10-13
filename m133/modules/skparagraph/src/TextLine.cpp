@@ -1006,9 +1006,11 @@ void TextLine::paintBackground(ParagraphPainter* painter,
 
 #ifdef ENABLE_TEXT_ENHANCE
 void TextLine::paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y) const {
-    // One background box follows one textStyle: consecutive attrs sharing the same styleId and the
-    // same RectStyle are merged into one complete rounded rect on this line. A style whose text
-    // wraps onto another line is painted as a new independent rect by that line's painting pass.
+    // One background box follows one textStyle. With a border set, consecutive attrs sharing the
+    // same styleId and the same RectStyle are merged into one complete rounded rect on this
+    // line; without a border each attr keeps its original per-run rect with the corner roles
+    // from computeRoundRect. A style whose text wraps onto another line is painted as a new
+    // independent rect by that line's painting pass.
     int attrCount = static_cast<int>(fRoundRectAttrs.size());
     int startIndex = 0;
     while (startIndex < attrCount) {
@@ -1017,46 +1019,57 @@ void TextLine::paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y)
             ++startIndex;
             continue;
         }
+        const Run* run = startAttr.run;
+        const RectStyle& rectStyle = startAttr.roundRectStyle;
+        bool hasBorder = rectStyle.borderWidth > 0 && rectStyle.borderColor != 0;
 
+        // Horizontal span of the box: the union of the group clips, but the group only extends
+        // beyond the first attr when a border is set (no border keeps one rect per run). The
+        // vertical span always comes from the run's TopInGroup/BottomInGroup so the box keeps a
+        // uniform height across all runs.
         int endIndex = startIndex;
-        while (endIndex + 1 < attrCount && hasBackgroundRect(fRoundRectAttrs[endIndex + 1]) &&
-               fRoundRectAttrs[endIndex + 1].styleId == startAttr.styleId &&
-               fRoundRectAttrs[endIndex + 1].roundRectStyle == startAttr.roundRectStyle) {
-            ++endIndex;
-        }
-
-        // Union of the group clips: horizontal span covers every attr, vertical span takes the
-        // min top and max bottom so the merged box keeps a uniform height across all runs.
         SkScalar left = startAttr.rect.left();
         SkScalar right = startAttr.rect.right();
-        SkScalar top = startAttr.rect.top();
-        SkScalar bottom = startAttr.rect.bottom();
-        for (int index = startIndex + 1; index <= endIndex; ++index) {
-            const SkRect& rect = fRoundRectAttrs[index].rect;
-            left = std::fmin(left, rect.left());
-            right = std::fmax(right, rect.right());
-            top = std::fmin(top, rect.top());
-            bottom = std::fmax(bottom, rect.bottom());
+        bool roundLt = false, roundRt = false, roundRb = false, roundLb = false;
+        SkScalar maxRadius = 0.0f;
+        if (hasBorder) {
+            while (endIndex + 1 < attrCount && hasBackgroundRect(fRoundRectAttrs[endIndex + 1]) &&
+                   fRoundRectAttrs[endIndex + 1].styleId == startAttr.styleId &&
+                   fRoundRectAttrs[endIndex + 1].roundRectStyle == startAttr.roundRectStyle) {
+                const SkRect& rect = fRoundRectAttrs[++endIndex].rect;
+                left = std::fmin(left, rect.left());
+                right = std::fmax(right, rect.right());
+            }
+            // Every radius is clamped into [0, half of the smaller side] so the complete box
+            // stays valid.
+            maxRadius = std::fmax(
+                std::fmin(right - left, run->getBottomInGroup() - run->getTopInGroup()) / 2, 0.0f);
+            roundLt = roundRt = roundRb = roundLb = true;
+        } else {
+            maxRadius = run->getMaxRoundRectRadius();
+            RoundRectType rType = startAttr.fRoundRectType;
+            roundLt = roundLb = (rType == RoundRectType::ALL || rType == RoundRectType::LEFT_ONLY);
+            roundRt = roundRb = (rType == RoundRectType::ALL || rType == RoundRectType::RIGHT_ONLY);
         }
-
-        const RectStyle& rectStyle = startAttr.roundRectStyle;
-        // Every radius is clamped into [0, half of the smaller side] so the complete box stays valid.
-        SkScalar maxRadius = std::fmax(std::fmin(right - left, bottom - top) / 2, 0.0f);
-        auto clampRadius = [maxRadius](SkScalar radius) {
-            return std::fmin(std::fmax(radius, 0.0f), maxRadius);
+        auto cornerRadius = [maxRadius](SkScalar radius, bool round) -> SkScalar {
+            return round ? std::fmax(std::fmin(radius, maxRadius), 0.0f) : 0.0f;
         };
-        SkScalar ltRadius = clampRadius(rectStyle.leftTopRadius);
-        SkScalar rtRadius = clampRadius(rectStyle.rightTopRadius);
-        SkScalar rbRadius = clampRadius(rectStyle.rightBottomRadius);
-        SkScalar lbRadius = clampRadius(rectStyle.leftBottomRadius);
+        SkScalar ltRadius = cornerRadius(rectStyle.leftTopRadius, roundLt);
+        SkScalar rtRadius = cornerRadius(rectStyle.rightTopRadius, roundRt);
+        SkScalar rbRadius = cornerRadius(rectStyle.rightBottomRadius, roundRb);
+        SkScalar lbRadius = cornerRadius(rectStyle.leftBottomRadius, roundLb);
         const SkVector radii[4] = {
             {ltRadius, ltRadius}, {rtRadius, rtRadius}, {rbRadius, rbRadius}, {lbRadius, lbRadius}};
-        SkRect skRect(SkRect::MakeLTRB(left, top, right, bottom));
+        SkRect skRect(SkRect::MakeLTRB(left, run->getTopInGroup(), right, run->getBottomInGroup()));
         SkRRect skRRect;
         skRRect.setRectRadii(skRect, radii);
         skRRect.offset(x + this->offset().x(), y + this->offset().y());
-        painter->drawRRectWithBorder(
-            skRRect, rectStyle.color, rectStyle.borderColor, rectStyle.borderWidth);
+        if (hasBorder) {
+            painter->drawRRectWithBorder(
+                skRRect, rectStyle.color, rectStyle.borderColor, rectStyle.borderWidth);
+        } else {
+            painter->drawRRect(skRRect, rectStyle.color);
+        }
 
         startIndex = endIndex + 1;
     }
