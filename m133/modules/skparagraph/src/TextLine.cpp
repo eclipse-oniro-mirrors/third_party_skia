@@ -724,15 +724,17 @@ void TextLine::format(TextAlign align, SkScalar maxWidth) {
         }
     } else if (align == TextAlign::kRight) {
 #ifdef ENABLE_TEXT_ENHANCE
-        auto lastCluster = fOwner->clusters()[fGhostClusterRange.end - 1];
-        bool isRTLWhiteSpace = lastCluster.isWhitespaceBreak() && !lastCluster.run().leftToRight();
-        // Only be entered when the text alignment direction is RTL and the last character is an RTL
-        // whitespace
-        if (fOwner->paragraphStyle().getTextDirection() == TextDirection::kRtl && isRTLWhiteSpace) {
-            fShift = maxWidth - this->width();
-        } else {
-            fShift = delta;
+        if (fGhostClusterRange.width() > 0 && fGhostClusterRange.end >= 1) {
+            auto lastCluster = fOwner->clusters()[fGhostClusterRange.end - 1];
+            bool isRTLWhiteSpace = lastCluster.isWhitespaceBreak() && !lastCluster.run().leftToRight();
+            // Only be entered when the text alignment direction is RTL and the last character is an RTL
+            // whitespace
+            if (fOwner->paragraphStyle().getTextDirection() == TextDirection::kRtl && isRTLWhiteSpace) {
+                fShift = maxWidth - this->width();
+                return;
+            }
         }
+        fShift = delta;
 #else
         fShift = delta;
 #endif
