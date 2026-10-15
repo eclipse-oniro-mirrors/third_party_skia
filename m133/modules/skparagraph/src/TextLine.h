@@ -218,6 +218,7 @@ public:
     SkScalar autoSpacing();
     void resetLineAutoSpacing(size_t resetStart);
     bool isRTLPunctuationHanging(SkScalar delta, SkScalar maxWidth);
+    bool hasRTLTrailingWhiteSpace() const;
 #else
 	void format(TextAlign align, SkScalar maxWidth);
 #endif
@@ -377,6 +378,14 @@ private:
     void shiftCluster(const Cluster* cluster, SkScalar shift, SkScalar prevShift);
 #ifdef ENABLE_TEXT_ENHANCE
     void paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y) const;
+    int paintRoundRectGroup(int startIndex,
+                            ParagraphPainter* painter,
+                            SkScalar x,
+                            SkScalar y) const;
+    SkRRect computeGroupRoundRect(const RoundRectAttr& startAttr,
+                                  bool hasBorder,
+                                  SkScalar left,
+                                  SkScalar right) const;
     void spacingCluster(const Cluster* cluster, SkScalar spacing, SkScalar prevSpacing);
     bool hasBackgroundRect(const RoundRectAttr& attr) const;
     void computeRoundRect(int& index, int& preIndex, std::vector<Run*>& groupRuns, Run* run);
