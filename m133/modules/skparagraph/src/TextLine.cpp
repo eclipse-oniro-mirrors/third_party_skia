@@ -419,8 +419,9 @@ void TextLine::paint(ParagraphPainter* painter, SkScalar x, SkScalar y) {
 }
 
 #ifdef ENABLE_TEXT_ENHANCE
-bool TextLine::hasBackgroundRect(const RoundRectAttr& attr) {
-    return attr.roundRectStyle.color != 0 && attr.rect.width() > 0;
+bool TextLine::hasBackgroundRect(const RoundRectAttr& attr) const {
+    bool hasBorder = attr.roundRectStyle.borderWidth > 0 && attr.roundRectStyle.borderColor != 0;
+    return (attr.roundRectStyle.color != 0 || hasBorder) && attr.rect.width() > 0;
 }
 
 void TextLine::computeRoundRect(int& index, int& preIndex, std::vector<Run*>& groupRuns, Run* run) {
@@ -693,6 +694,18 @@ bool TextLine::isRTLPunctuationHanging(SkScalar delta, SkScalar maxWidth) {
     return true;
 }
 
+// Check whether the line ends with an RTL whitespace that must be excluded from the
+// right-aligned shift. Only returns true when the text alignment direction is RTL and the
+// last character of the line is an RTL whitespace.
+bool TextLine::hasRTLTrailingWhiteSpace() const {
+    if (fGhostClusterRange.width() <= 0 || fGhostClusterRange.end < 1) {
+        return false;
+    }
+    auto lastCluster = fOwner->clusters()[fGhostClusterRange.end - 1];
+    return fOwner->paragraphStyle().getTextDirection() == TextDirection::kRtl &&
+           lastCluster.isWhitespaceBreak() && !lastCluster.run().leftToRight();
+}
+
 void TextLine::format(TextAlign align, SkScalar maxWidth, EllipsisModal ellipsisModal) {
     SkScalar delta = maxWidth - this->widthWithEllipsisSpaces();
     if (fOwner->paragraphStyle().getTrailingSpaceOptimized()) {
@@ -723,18 +736,12 @@ void TextLine::format(TextAlign align, SkScalar maxWidth) {
         }
     } else if (align == TextAlign::kRight) {
 #ifdef ENABLE_TEXT_ENHANCE
-        auto lastCluster = fOwner->clusters()[fGhostClusterRange.end - 1];
-        bool isRTLWhiteSpace = lastCluster.isWhitespaceBreak() && !lastCluster.run().leftToRight();
-        // Only be entered when the text alignment direction is RTL and the last character is an RTL
-        // whitespace
-        if (fOwner->paragraphStyle().getTextDirection() == TextDirection::kRtl && isRTLWhiteSpace) {
+        if (hasRTLTrailingWhiteSpace()) {
             fShift = maxWidth - this->width();
-        } else {
-            fShift = delta;
+            return;
         }
-#else
-        fShift = delta;
 #endif
+        fShift = delta;
     } else if (align == TextAlign::kCenter) {
         fShift = delta / 2;
     }
@@ -1005,34 +1012,95 @@ void TextLine::paintBackground(ParagraphPainter* painter,
 
 #ifdef ENABLE_TEXT_ENHANCE
 void TextLine::paintRoundRect(ParagraphPainter* painter, SkScalar x, SkScalar y) const {
-    for (const RoundRectAttr& attr : fRoundRectAttrs) {
-        if (attr.roundRectStyle.color == 0) {
-            continue;
+    // One background box follows one textStyle. With a border set, consecutive attrs sharing the
+    // same styleId and the same RectStyle are merged into one complete rounded rect on this
+    // line; without a border each attr keeps its original per-run rect with the corner roles
+    // from computeRoundRect. A style whose text wraps onto another line is painted as a new
+    // independent rect by that line's painting pass.
+    int attrCount = static_cast<int>(fRoundRectAttrs.size());
+    int startIndex = 0;
+    while (startIndex < attrCount) {
+        if (hasBackgroundRect(fRoundRectAttrs[startIndex])) {
+            startIndex = paintRoundRectGroup(startIndex, painter, x, y);
+        } else {
+            ++startIndex;
         }
-        const Run* run = attr.run;
-
-        SkScalar ltRadius = 0.0f;
-        SkScalar rtRadius = 0.0f;
-        SkScalar rbRadius = 0.0f;
-        SkScalar lbRadius = 0.0f;
-        RoundRectType rType = attr.fRoundRectType;
-        if (rType == RoundRectType::ALL || rType == RoundRectType::LEFT_ONLY) {
-            ltRadius = std::fmin(attr.roundRectStyle.leftTopRadius, run->getMaxRoundRectRadius());
-            lbRadius = std::fmin(attr.roundRectStyle.leftBottomRadius, run->getMaxRoundRectRadius());
-        }
-        if (rType == RoundRectType::ALL || rType == RoundRectType::RIGHT_ONLY) {
-            rtRadius = std::fmin(attr.roundRectStyle.rightTopRadius, run->getMaxRoundRectRadius());
-            rbRadius = std::fmin(attr.roundRectStyle.rightBottomRadius, run->getMaxRoundRectRadius());
-        }
-        const SkVector radii[4] = {
-            {ltRadius, ltRadius}, {rtRadius, rtRadius}, {rbRadius, rbRadius}, {lbRadius, lbRadius}};
-        SkRect skRect(
-            SkRect::MakeLTRB(attr.rect.left(), run->getTopInGroup(), attr.rect.right(), run->getBottomInGroup()));
-        SkRRect skRRect;
-        skRRect.setRectRadii(skRect, radii);
-        skRRect.offset(x + this->offset().x(), y + this->offset().y());
-        painter->drawRRect(skRRect, attr.roundRectStyle.color);
     }
+}
+
+// Paints the merged background box for the group starting at startIndex and returns the
+// index of the first attr that is not part of this group.
+int TextLine::paintRoundRectGroup(int startIndex,
+                                  ParagraphPainter* painter,
+                                  SkScalar x,
+                                  SkScalar y) const {
+    const RoundRectAttr& startAttr = fRoundRectAttrs[startIndex];
+    const RectStyle& rectStyle = startAttr.roundRectStyle;
+    bool hasBorder = rectStyle.borderWidth > 0 && rectStyle.borderColor != 0;
+
+    // Horizontal span of the box: the union of the group clips, but the group only extends
+    // beyond the first attr when a border is set (no border keeps one rect per run). The
+    // vertical span always comes from the run's TopInGroup/BottomInGroup so the box keeps a
+    // uniform height across all runs.
+    SkScalar left = startAttr.rect.left();
+    SkScalar right = startAttr.rect.right();
+    int endIndex = startIndex;
+    if (hasBorder) {
+        int attrCount = static_cast<int>(fRoundRectAttrs.size());
+        while (endIndex + 1 < attrCount && hasBackgroundRect(fRoundRectAttrs[endIndex + 1]) &&
+               fRoundRectAttrs[endIndex + 1].styleId == startAttr.styleId &&
+               fRoundRectAttrs[endIndex + 1].roundRectStyle == startAttr.roundRectStyle) {
+            const SkRect& rect = fRoundRectAttrs[++endIndex].rect;
+            left = std::fmin(left, rect.left());
+            right = std::fmax(right, rect.right());
+        }
+    }
+    SkRRect skRRect = computeGroupRoundRect(startAttr, hasBorder, left, right);
+    skRRect.offset(x + this->offset().x(), y + this->offset().y());
+    if (hasBorder) {
+        painter->drawRRectWithBorder(
+                skRRect, rectStyle.color, rectStyle.borderColor, rectStyle.borderWidth);
+    } else {
+        painter->drawRRect(skRRect, rectStyle.color);
+    }
+    return endIndex + 1;
+}
+
+// Builds the rounded rect for the group span [left, right]; with a border every corner is
+// rounded, otherwise only the corners assigned by computeRoundRect are.
+SkRRect TextLine::computeGroupRoundRect(const RoundRectAttr& startAttr,
+                                        bool hasBorder,
+                                        SkScalar left,
+                                        SkScalar right) const {
+    const Run* run = startAttr.run;
+    const RectStyle& rectStyle = startAttr.roundRectStyle;
+    bool roundLt = false, roundRt = false, roundRb = false, roundLb = false;
+    SkScalar maxRadius = 0.0f;
+    if (hasBorder) {
+        // Every radius is clamped into [0, half of the smaller side] so the complete box
+        // stays valid.
+        maxRadius = std::fmax(
+                std::fmin(right - left, run->getBottomInGroup() - run->getTopInGroup()) / 2, 0.0f);
+        roundLt = roundRt = roundRb = roundLb = true;
+    } else {
+        maxRadius = run->getMaxRoundRectRadius();
+        RoundRectType rType = startAttr.fRoundRectType;
+        roundLt = roundLb = (rType == RoundRectType::ALL || rType == RoundRectType::LEFT_ONLY);
+        roundRt = roundRb = (rType == RoundRectType::ALL || rType == RoundRectType::RIGHT_ONLY);
+    }
+    auto cornerRadius = [maxRadius](SkScalar radius, bool round) -> SkScalar {
+        return round ? std::fmax(std::fmin(radius, maxRadius), 0.0f) : 0.0f;
+    };
+    SkScalar ltRadius = cornerRadius(rectStyle.leftTopRadius, roundLt);
+    SkScalar rtRadius = cornerRadius(rectStyle.rightTopRadius, roundRt);
+    SkScalar rbRadius = cornerRadius(rectStyle.rightBottomRadius, roundRb);
+    SkScalar lbRadius = cornerRadius(rectStyle.leftBottomRadius, roundLb);
+    const SkVector radii[4] = {
+            {ltRadius, ltRadius}, {rtRadius, rtRadius}, {rbRadius, rbRadius}, {lbRadius, lbRadius}};
+    SkRect skRect(SkRect::MakeLTRB(left, run->getTopInGroup(), right, run->getBottomInGroup()));
+    SkRRect skRRect;
+    skRRect.setRectRadii(skRect, radii);
+    return skRRect;
 }
 #endif
 

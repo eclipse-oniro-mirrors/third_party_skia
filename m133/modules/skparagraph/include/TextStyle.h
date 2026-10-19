@@ -182,13 +182,17 @@ struct RectStyle {
     SkScalar rightTopRadius{0.0f};
     SkScalar rightBottomRadius{0.0f};
     SkScalar leftBottomRadius{0.0f};
+    SkColor borderColor{0xFFFFFFFF}; // default border color: white, only used when borderWidth > 0
+    SkScalar borderWidth{0.0f};      // 0.0f means no border
 
     bool operator ==(const RectStyle& rhs) const {
         return color == rhs.color &&
             leftTopRadius == rhs.leftTopRadius &&
             rightTopRadius == rhs.rightTopRadius &&
             rightBottomRadius == rhs.rightBottomRadius &&
-            leftBottomRadius == rhs.leftBottomRadius;
+            leftBottomRadius == rhs.leftBottomRadius &&
+            borderColor == rhs.borderColor &&
+            borderWidth == rhs.borderWidth;
     }
 
     bool operator !=(const RectStyle& rhs) const {
@@ -196,7 +200,9 @@ struct RectStyle {
             leftTopRadius == rhs.leftTopRadius &&
             rightTopRadius == rhs.rightTopRadius &&
             rightBottomRadius == rhs.rightBottomRadius &&
-            leftBottomRadius == rhs.leftBottomRadius);
+            leftBottomRadius == rhs.leftBottomRadius &&
+            borderColor == rhs.borderColor &&
+            borderWidth == rhs.borderWidth);
     }
 };
 
