@@ -28,7 +28,16 @@ config("skia_paragraph_config") {
 }
 
 ohos_static_library("skia_paragraph_ohos_new") {
-  branch_protector_ret = "pac_ret"
+  if (current_os == "ohos") {
+    branch_protector_ret = "pac_ret"
+    sanitize = {
+      cfi = true
+      cfi_cross_dso = true
+      cfi_vcall_icall_only = true
+      debug = false
+    }
+  }
+
   part_name = "skia"
   subsystem_name = "thirdparty"
 
