@@ -117,6 +117,13 @@ static bool angle_backend_is_metal(GrGLANGLEBackend backend) {
     return backend == GrGLANGLEBackend::kMetal;
 }
 
+namespace {
+bool is_tiler_gpu(GrGLVendor vendor) {
+    return vendor == GrGLVendor::kARM         ||
+           vendor == GrGLVendor::kImagination ||
+           vendor == GrGLVendor::kQualcomm;
+}
+} // anonymous namespace
 void GrGLCaps::init(const GrContextOptions& contextOptions,
                     const GrGLContextInfo& ctxInfo,
                     const GrGLInterface* gli) {
@@ -220,10 +227,10 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
         }
     }
 
-    if (ctxInfo.vendor() == GrGLVendor::kARM         ||
-        ctxInfo.vendor() == GrGLVendor::kImagination ||
-        ctxInfo.vendor() == GrGLVendor::kQualcomm ) {
+    if (is_tiler_gpu(ctxInfo.vendor())) {
         fPreferFullscreenClears = true;
+        fDiscardStencilValuesAfterRenderPass = true;
+        fClearsAreFasterThanLoads = true;
     }
 
     if (GR_IS_GR_GL(standard)) {

@@ -47,6 +47,17 @@ class KeyBuilder;
 class VulkanExtensions;
 enum class Protected : bool;
 struct VulkanInterface;
+
+enum VkVendor {
+    kAMD_VkVendor = 4098,
+    kARM_VkVendor = 5045,
+    kGoogle_VkVendor = 0x1AE0,
+    kImagination_VkVendor = 4112,
+    kIntel_VkVendor = 32902,
+    kNvidia_VkVendor = 4318,
+    kQualcomm_VkVendor = 20803,
+    kHisi_VkVendor = 6629,
+};
 }  // namespace skgpu
 
 /**
@@ -302,16 +313,6 @@ public:
 #endif
 
 private:
-    enum VkVendor {
-        kAMD_VkVendor = 4098,
-        kARM_VkVendor = 5045,
-        kGoogle_VkVendor = 0x1AE0,
-        kImagination_VkVendor = 4112,
-        kIntel_VkVendor = 32902,
-        kNvidia_VkVendor = 4318,
-        kQualcomm_VkVendor = 20803,
-        kHisi_VkVendor = 6629,
-    };
 
     enum class IntelGPUType {
         // 9th gen
