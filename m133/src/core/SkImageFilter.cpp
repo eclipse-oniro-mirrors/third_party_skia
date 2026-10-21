@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <optional>
 #include <utility>
+#include <vector>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // SkImageFilter - A number of the public APIs on SkImageFilter downcast to SkImageFilter_Base
