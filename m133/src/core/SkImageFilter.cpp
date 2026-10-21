@@ -167,6 +167,28 @@ SkImageFilter_Base::SkImageFilter_Base(sk_sp<SkImageFilter> const* inputs,
 
 SkImageFilter_Base::~SkImageFilter_Base() {
     SkImageFilterCache::Get()->purgeByImageFilter(this);
+#ifdef SKIA_OHOS_SVG_PROTECTION
+    std::vector<sk_sp<SkImageFilter>> pending;
+    pending.reserve(fInputs.count());
+    for (auto& input : fInputs) {
+        if (input) {
+            pending.push_back(std::move(input));
+        }
+    }
+ 
+    while (!pending.empty()) {
+        sk_sp<SkImageFilter> cur = std::move(pending.back());
+        pending.pop_back();
+        if (cur->unique()) {
+            auto* ifb = as_IFB(cur.get());
+            for (auto& input : ifb->fInputs) {
+                if (input) {
+                    pending.push_back(std::move(input));
+                }
+            }
+        }
+    }
+#endif
 }
 
 std::pair<sk_sp<SkImageFilter>, std::optional<SkRect>>
@@ -340,6 +362,12 @@ std::optional<skif::DeviceSpace<SkIRect>> SkImageFilter_Base::getOutputBounds(
 }
 
 SkImageFilter_Base::MatrixCapability SkImageFilter_Base::getCTMCapability() const {
+#ifdef SKIA_OHOS_SVG_PROTECTION
+    if (!sksvg::HasSufficientStackForRecursion(nullptr)) {
+        SkDebugf("SkImageFilter: insufficient stack for getCTMCapability recursion, skipping");
+        return MatrixCapability::kComplex;
+    }
+#endif
     MatrixCapability result = this->onGetCTMCapability();
     const int count = this->countInputs();
     for (int i = 0; i < count; ++i) {
