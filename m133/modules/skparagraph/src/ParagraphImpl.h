@@ -178,6 +178,26 @@ struct ResolvedFontDescriptor {
     TextIndex fTextStart;
 };
 
+#ifdef ENABLE_TEXT_ENHANCE
+// Character classes allowed by the shaping fast path.
+// The fast path only accepts characters from this whitelist; each class tags
+// the segment with the single dedicated typeface used to shape it.
+enum class FastPathCharClass : uint8_t {
+    kUnsupported,       // requires complex shaping (harfbuzz)
+    kCustom,            // user-specified font family, highest priority
+    kSimplifiedChinese, // simplified chinese and general text -> HarmonyOS Sans SC
+    kEmoji,             // emoji -> HMOS Color Emoji
+};
+
+// A maximal text range of characters with the same fast path class.
+// Each segment is shaped into exactly one run by OneLineShaper::shapeFastPath.
+struct FastPathSegment {
+    TextRange fRange;
+    FastPathCharClass fClass;
+    const Block* fBlock;
+};
+#endif
+
 #ifndef ENABLE_TEXT_ENHANCE
 enum InternalState {
   kUnknown = 0,
@@ -597,6 +617,10 @@ private:
     void getIntrinsicSize(SkScalar& maxIntrinsicWidth, SkScalar& minIntrinsicWidth, SkScalar& alphabeticBaseline,
         SkScalar& ideographicBaseline, bool& exceededMaxLines);
 
+#ifdef ENABLE_TEXT_ENHANCE
+    bool collectFastPathSegments(SkSpan<Block> blocks, std::vector<FastPathSegment>& segments);
+    static FastPathCharClass classifyFastPathChar(SkUnichar unicode);
+#endif
     ParagraphPainter::PaintID updateTextStyleColorAndForeground(TextStyle& TextStyle, SkColor color);
     TextBox getEmptyTextRect(RectHeightStyle rectHeightStyle) const;
     size_t prefixByteCountUntilChar(size_t index);

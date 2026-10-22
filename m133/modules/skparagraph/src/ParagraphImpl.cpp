@@ -1733,6 +1733,46 @@ bool ParagraphImpl::shapeTextIntoEndlessLine() {
     fFontSwitches.clear();
 
     OneLineShaper oneLineShaper(this);
+
+#ifdef ENABLE_TEXT_ENHANCE
+    if (fPlaceholders.size() == 1 && fBidiRegions.size() <= 1) {
+        uint8_t bidiLevel = fBidiRegions.empty() ? 0 : fBidiRegions[0].level;
+        auto blockRange = this->findAllBlocks(TextRange(0, fText.size()));
+        // The fast path only supports LTR (even bidi level); RTL and the empty
+        // block range (no style covers the text) fall through to harfbuzz.
+        if (bidiLevel % 2 == 0 && blockRange.start < fTextStyles.size()) {
+            SkSpan<Block> blocks(this->blocks(blockRange));
+
+            std::vector<FastPathSegment> segments;
+            if (!blocks.empty() && this->collectFastPathSegments(blocks, segments)) {
+                const int runsBeforeFastPath = fRuns.size();
+                const int fontSwitchesBeforeFastPath = fFontSwitches.size();
+                fRuns.reserve(fRuns.size() + static_cast<int>(segments.size()));
+
+                SkScalar advanceX = 0;
+                bool fastPathSuccess = true;
+                for (const auto& segment : segments) {
+                    if (!oneLineShaper.shapeFastPath(segment, bidiLevel, advanceX)) {
+                        fastPathSuccess = false;
+                        break;
+                    }
+                }
+
+                if (fastPathSuccess && oneLineShaper.unresolvedGlyphs() == 0) {
+                    fUnresolvedGlyphs = oneLineShaper.unresolvedGlyphs();
+                    this->applySpacingAndBuildClusterTable();
+                    return true;
+                }
+
+                // Roll back the partially shaped fast path runs before falling back to harfbuzz
+                fRuns.pop_back_n(fRuns.size() - runsBeforeFastPath);
+                fFontSwitches.pop_back_n(fFontSwitches.size() - fontSwitchesBeforeFastPath);
+                oneLineShaper = OneLineShaper(this);
+            }
+        }
+    }
+#endif
+
     auto result = oneLineShaper.shape();
     fUnresolvedGlyphs = oneLineShaper.unresolvedGlyphs();
 
@@ -4001,6 +4041,217 @@ std::pair<std::vector<PathInfo>, bool> ParagraphImpl::getTextPathByClusterRange(
     }
     return {pathInfo, allSuccess};
 }
+
+#ifdef ENABLE_TEXT_ENHANCE
+// Whitelist for the shaping fast path: only the classes below can skip harfbuzz.
+// Emoji is checked first because a few emoji-presentation codepoints (3030, 303D,
+// 3297, 3299) live inside the CJK ranges of the simplified chinese class.
+// Everything that needs real shaping is left out on purpose: combining marks,
+// ZWJ/variation-selector/keycap sequences, skin tone modifiers (1F3FB-1F3FF),
+// regional indicators (1F1E6-1F1FF, flag ligatures), and all complex scripts.
+
+// Sorted emoji-presentation ranges (BMP + SMP), equivalent to the emoji
+// whitelist that used to be a long if/else chain. Binary search avoids walking
+// every condition for non-emoji (and thus non-whitelisted) codepoints.
+static const SkRange<SkUnichar> kEmojiRanges[] = {
+    // BMP
+    {0x231A, 0x231B}, {0x23E9, 0x23EC}, {0x23F0, 0x23F0}, {0x23F3, 0x23F3},
+    {0x25AA, 0x25AB}, {0x25B6, 0x25B6}, {0x25C0, 0x25C0}, {0x25FB, 0x25FE},
+    {0x2600, 0x2604}, {0x260E, 0x260E}, {0x2611, 0x2611}, {0x2614, 0x2615},
+    {0x2618, 0x2618}, {0x261D, 0x261D}, {0x2620, 0x2620}, {0x2622, 0x2623},
+    {0x2626, 0x2626}, {0x262A, 0x262A}, {0x262E, 0x262F}, {0x2638, 0x263A},
+    {0x2640, 0x2640}, {0x2642, 0x2642}, {0x2648, 0x2653}, {0x265F, 0x2660},
+    {0x2663, 0x2663}, {0x2665, 0x2666}, {0x2668, 0x2668}, {0x267B, 0x267B},
+    {0x267E, 0x267F}, {0x2692, 0x2697}, {0x2699, 0x2699}, {0x269B, 0x269C},
+    {0x26A0, 0x26A1}, {0x26A7, 0x26A7}, {0x26AA, 0x26AB}, {0x26B0, 0x26B1},
+    {0x26BD, 0x26BE}, {0x26C4, 0x26C5}, {0x26C8, 0x26C8}, {0x26CE, 0x26CF},
+    {0x26D1, 0x26D1}, {0x26D3, 0x26D4}, {0x26E9, 0x26EA}, {0x26F0, 0x26F5},
+    {0x26F7, 0x26FA}, {0x26FD, 0x26FD}, {0x2702, 0x2702}, {0x2705, 0x2705},
+    {0x2708, 0x270D}, {0x270F, 0x270F}, {0x2712, 0x2712}, {0x2714, 0x2714},
+    {0x2716, 0x2716}, {0x271D, 0x271D}, {0x2721, 0x2721}, {0x2728, 0x2728},
+    {0x2733, 0x2734}, {0x2744, 0x2744}, {0x2747, 0x2747}, {0x274C, 0x274C},
+    {0x274E, 0x274E}, {0x2753, 0x2755}, {0x2757, 0x2757}, {0x2763, 0x2764},
+    {0x2795, 0x2797}, {0x27A1, 0x27A1}, {0x27B0, 0x27B0}, {0x27BF, 0x27BF},
+    {0x2934, 0x2935}, {0x2B05, 0x2B07}, {0x2B1B, 0x2B1C}, {0x2B50, 0x2B50},
+    {0x2B55, 0x2B55}, {0x3030, 0x3030}, {0x303D, 0x303D}, {0x3297, 0x3297},
+    {0x3299, 0x3299},
+    // SMP
+    {0x1F000, 0x1F0FF}, {0x1F200, 0x1F2FF}, {0x1F300, 0x1F3FA},
+    {0x1F400, 0x1F6FF}, {0x1F900, 0x1F9FF}, {0x1FA70, 0x1FAFF},
+};
+
+static bool isEmojiCodepoint(SkUnichar unicode) {
+    auto it = std::lower_bound(
+        std::begin(kEmojiRanges), std::end(kEmojiRanges), unicode,
+        [](const SkRange<SkUnichar>& range, SkUnichar value) {
+            return range.end < value;
+        });
+    return it != std::end(kEmojiRanges) && unicode >= it->start;
+}
+
+FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
+    // Hot path: CJK Unified Ideographs — the overwhelming majority of Chinese
+    // text. A single range check avoids walking the emoji whitelist first
+    // (all emoji codepoints live outside this range).
+    if (unicode >= 0x4E00 && unicode <= 0x9FFF) {
+        return FastPathCharClass::kSimplifiedChinese;
+    }
+
+    // Hard line breaks (\n, \r) are zero-width control characters with no glyph
+    // of their own; tag them as simplified chinese so they inherit the adjacent
+    // font and multi-line text does not force a harfbuzz fallback.
+    if (unicode == 0x0A || unicode == 0x0D) {
+        return FastPathCharClass::kSimplifiedChinese;
+    }
+
+    if (unicode < 0x20) {
+        return FastPathCharClass::kUnsupported;
+    }
+
+    // Halfwidth space and ASCII digits, common in Chinese text.
+    if (unicode == 0x20 || (unicode >= 0x30 && unicode <= 0x39)) {
+        return FastPathCharClass::kSimplifiedChinese;
+    }
+
+    // Any remaining ASCII (Latin letters, halfwidth punctuation) is not in the
+    // whitelist; reject it before the emoji table so regular-path text does not
+    // pay the emoji lookup cost.
+    if (unicode < 0x80) {
+        return FastPathCharClass::kUnsupported;
+    }
+
+    // Emoji-presentation codepoints (BMP + SMP), resolved via a sorted range
+    // table with binary search instead of a long if/else chain.
+    if (isEmojiCodepoint(unicode)) {
+        return FastPathCharClass::kEmoji;
+    }
+
+    // Simplified chinese remainder: CJK Extension A, compat ideographs, CJK
+    // punctuation/symbols and fullwidth forms. Latin/Greek/Cyrillic/general
+    // punctuation/currency/math are excluded on purpose: they require shaping
+    // (kerning/ligatures) that the fast path does not apply, which would
+    // diverge from the harfbuzz result. (3030/303D are caught by emoji above.)
+    if ((unicode >= 0x3400 && unicode <= 0x4DBF) ||             // CJK Extension A
+        (unicode >= 0xF900 && unicode <= 0xFAFF) ||             // CJK Compat Ideographs
+        (unicode >= 0x3000 && unicode <= 0x3029) ||             // CJK punctuation (excl. 302A-302F tone marks)
+        (unicode >= 0x3030 && unicode <= 0x303F) ||             // CJK symbols (3030/303D caught by emoji)
+        (unicode >= 0xFF00 && unicode <= 0xFF60)) {             // Fullwidth Forms
+        return FastPathCharClass::kSimplifiedChinese;
+    }
+
+    return FastPathCharClass::kUnsupported;
+}
+
+// True when the style requests a font family other than the HarmonyOS Sans
+// series or the collection defaults; such text is tagged as custom so that
+// the user-specified family shapes it with the highest priority
+static bool requestsCustomFont(const std::vector<SkString>& fontFamilies,
+                               const std::vector<SkString>& defaultFamilies) {
+    if (fontFamilies.empty() || fontFamilies == defaultFamilies) {
+        return false;
+    }
+    for (const auto& family : fontFamilies) {
+        if (!family.startsWith("HarmonyOS") && !family.startsWith("Sans-serif")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Checks a block's text style for fast path eligibility (the style-level gates
+// that are independent of the character content).
+static bool isBlockStyleEligible(const TextStyle& style, const SkString& paragraphLocale) {
+    // Priority typefaces (custom symbols, HMSymbol etc.) are shaped by the
+    // full harfbuzz path; the fast path cannot honor them.
+    if (!style.getFontTypefaces().empty()) {
+        return false;
+    }
+    if (style.isCustomSymbol()) {
+        return false;
+    }
+    // Only simplified-chinese locales are safe for the fast path.
+    // Traditional chinese (Hant/TW/HK/MO) selects different glyph variants
+    // and other languages (ja/ko/en) may shape differently. Falls back to the
+    // paragraph-level locale, matching harfbuzz's LangIterator.
+    SkString locale = style.getLocale();
+    if (locale.isEmpty()) {
+        locale = paragraphLocale;
+    }
+    if (!locale.isEmpty()) {
+        bool isSimplifiedZh = locale.startsWith("zh") &&
+            !locale.contains("Hant") && !locale.contains("TW") &&
+            !locale.contains("HK") && !locale.contains("MO");
+        if (!isSimplifiedZh) {
+            return false;
+        }
+    }
+    if (!style.getFontFeatures().empty()) {
+        return false;
+    }
+    if (style.getLetterSpacing() != 0) {
+        return false;
+    }
+    if (style.getWordSpacing() != 0) {
+        return false;
+    }
+    return true;
+}
+
+// Checks every block for fast path eligibility and splits the text into segments
+// of consecutive characters with the same tag. Each segment is shaped into one
+// run by OneLineShaper::shapeFastPath. Returns false (with no usable output) as
+// soon as any block or character is not eligible for the fast path.
+bool ParagraphImpl::collectFastPathSegments(SkSpan<Block> blocks,
+                                            std::vector<FastPathSegment>& segments) {
+    const SkString paragraphLocale = this->paragraphStyle().getTextStyle().getLocale();
+    segments.reserve(segments.size() + blocks.size());
+    for (const Block& block : blocks) {
+        const TextStyle& style = block.fStyle;
+        if (!isBlockStyleEligible(style, paragraphLocale)) {
+            return false;
+        }
+        // The custom font tag has the highest priority: it replaces the script
+        // tags of every non-emoji character of the block
+        bool useCustomFont = requestsCustomFont(
+            style.getFontFamilies(), fFontCollection->getDefaultFamilyNames());
+
+        auto text = this->text(block.fRange);
+        const char* ptr = text.begin();
+        const char* end = text.end();
+
+        size_t segmentStart = block.fRange.start;
+        FastPathCharClass segmentClass = FastPathCharClass::kUnsupported;
+
+        while (ptr < end) {
+            const char* charStart = ptr;
+            SkUnichar unicode = SkUTF::NextUTF8(&ptr, end);
+            FastPathCharClass charClass = classifyFastPathChar(unicode);
+            if (charClass == FastPathCharClass::kUnsupported) {
+                return false;
+            }
+            if (useCustomFont && charClass != FastPathCharClass::kEmoji) {
+                charClass = FastPathCharClass::kCustom;
+            }
+            if (segmentClass == FastPathCharClass::kUnsupported) {
+                segmentClass = charClass;
+                segmentStart = block.fRange.start + (charStart - text.begin());
+            } else if (charClass != segmentClass) {
+                segments.emplace_back(FastPathSegment{
+                    TextRange(segmentStart, block.fRange.start + (charStart - text.begin())),
+                    segmentClass, &block});
+                segmentClass = charClass;
+                segmentStart = block.fRange.start + (charStart - text.begin());
+            }
+        }
+
+        if (segmentClass != FastPathCharClass::kUnsupported) {
+            segments.emplace_back(FastPathSegment{
+                TextRange(segmentStart, block.fRange.end), segmentClass, &block});
+        }
+    }
+    return true;
+}
+#endif
 #endif
 
 }  // namespace textlayout

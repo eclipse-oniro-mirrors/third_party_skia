@@ -90,6 +90,8 @@ struct ScaleParam {
 
 void scaleFontWithCompressionConfig(RSFont& font, ScaleOP op);
 void scaleFontWithCompressionConfig(RSFont& font, ScaleOP op, const ScaleParam& param);
+const ScaleParam& findCompressionConfigWithFont(const RSFont& font);
+const ScaleParam& findCompressionConfigWithFont(const std::shared_ptr<RSTypeface>& typeface);
 void metricsIncludeFontPadding(RSFontMetrics* metrics, const RSFont& font);
 
 const ScaleParam DEFAULT_SCALE_PARAM = ScaleParam{ .fontScale = 0, .baselineShiftScale = 0 };

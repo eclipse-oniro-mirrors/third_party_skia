@@ -46,6 +46,8 @@ public:
         return fDefaultFontManager;
     }
 
+    const std::vector<SkString>& getDefaultFamilyNames() const { return fDefaultFamilyNames; }
+
     std::vector<std::shared_ptr<RSTypeface>> findTypefaces(
         const std::vector<SkString>& familyNames, RSFontStyle fontStyle);
     std::vector<std::shared_ptr<RSTypeface>> findTypefaces(
