@@ -2669,6 +2669,9 @@ void TextLine::iterateThroughVisualRuns(EllipsisReadStrategy ellipsisReadStrateg
     }
 
     for (auto& runIndex : fRunsInVisualOrder) {
+        if (runIndex >= fOwner->runs().size()) {
+            continue;
+        }
         context.runIndex = runIndex;
         // add the lastClipRun's left ellipsis if necessary
         if (!context.isAlreadyUseEllipsis && fEllipsisIndex == runIndex &&
@@ -3819,13 +3822,20 @@ void TextLine::refreshLineRuns() {
 
     auto& start = fOwner->cluster(clustersWithSpaces().start);
     auto& end = fOwner->cluster(clustersWithSpaces().end - 1);
-    size_t numRuns = end.runIndex() - start.runIndex() + 1;
+    size_t startRunIndex = start.runIndex();
+    size_t endRunIndex = end.runIndex();
+    if (endRunIndex < startRunIndex || endRunIndex >= fOwner->runs().size()) {
+        TEXT_LOGE("Invalid run range [%{public}zu, %{public}zu)], "
+            "runSize=%{public}zu,", startRunIndex, endRunIndex, fOwner->runs().size());
+        return;
+    }
+    size_t numRuns = endRunIndex - startRunIndex + 1;
     constexpr int kPreallocCount = 4;
     AutoSTArray<kPreallocCount, SkUnicode::BidiLevel> runLevels(numRuns);
     size_t runLevelsIndex = 0;
     std::vector<RunIndex> placeholdersInOriginalOrder;
     InternalLineMetrics maxRunMetrics = getMaxRunMetrics();
-    for (auto runIndex = start.runIndex(); runIndex <= end.runIndex(); ++runIndex) {
+    for (auto runIndex = startRunIndex; runIndex <= endRunIndex; ++runIndex) {
         Run& run = fOwner->run(runIndex);
         runLevels[runLevelsIndex++] = run.fBidiLevel;
         maxRunMetrics.add(

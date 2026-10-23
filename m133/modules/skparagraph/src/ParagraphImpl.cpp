@@ -766,8 +766,8 @@ void ParagraphImpl::generateSplitPointsByLines(std::deque<SplitPoint>& splitPoin
         const TextLine& line = fLines[lineIndex];
         ClusterRange lineClusterRange = line.clustersWithSpaces();
         // Avoid abnormal split of the last line
-        if (lineIndex == (size_t)fLines.size() - 1) {
-            size_t lineEnd = line.clusters().end == 0 ? 0 : line.clusters().end - 1;
+        if (lineIndex == (size_t)fLines.size() - 1 && line.clusters().end > 0) {
+            size_t lineEnd = line.clusters().end - 1;
             lineClusterRange.end = cluster(lineEnd).run().clusterRange().end;
         }
         // Skip blank line
@@ -809,8 +809,8 @@ std::optional<SplitPoint> ParagraphImpl::generateSplitPoint(const ClusterRange& 
 
     SplitPoint splitPoint;
     splitPoint.runIndex = startCluster.run().index();
-    splitPoint.headClusterIndex = startCluster.textRange().start;
-    splitPoint.tailClusterIndex = endCluster.textRange().end;
+    splitPoint.headTextIndex = startCluster.textRange().start;
+    splitPoint.tailTextIndex = endCluster.textRange().end;
     auto it = std::find_if(fLines.begin(), fLines.end(), [&](const TextLine& line) {
         return line.clustersWithSpaces().contains(clusterRange);
     });
@@ -831,18 +831,38 @@ void ParagraphImpl::generateRunsBySplitPoints(std::deque<SplitPoint>& splitPoint
             continue;
         }
 
-        while (!splitPoints.empty()) {
+        // Generate all split runs of this run before committing any of them, so a
+        // failed split point never leaves the run partially split (clusters already
+        // re-based to split runs that would be discarded).
+        skia_private::TArray<Run, false> pendingSplits;
+        bool splitFailed = false;
+        while (!splitPoints.empty() && splitPoints.front().runIndex == runIndex) {
             SplitPoint& splitPoint = splitPoints.front();
-            size_t splitRunIndex = splitPoint.runIndex;
-            if (splitRunIndex != runIndex) {
+            pendingSplits.push_back(Run{run, newRunGlobalIndex + pendingSplits.size()});
+            if (!run.generateSplitRun(pendingSplits.back(), splitPoint)) {
+                splitFailed = true;
                 break;
             }
-
-            Run splitRun{run, newRunGlobalIndex++};
-            run.generateSplitRun(splitRun, splitPoint);
-            updateSplitRunClusterInfo(splitRun, true);
-            runs.push_back(std::move(splitRun));
             splitPoints.pop_front();
+        }
+
+        if (!splitFailed && !pendingSplits.empty()) {
+            for (Run& splitRun : pendingSplits) {
+                updateSplitRunClusterInfo(splitRun, true);
+                runs.push_back(std::move(splitRun));
+            }
+            newRunGlobalIndex += pendingSplits.size();
+        } else {
+            // Fallback: generateSplitRun only copies data out of the original run,
+            // so the whole run is still intact. Keep it unsplit and drop all its
+            // split points to avoid losing glyphs and corrupting cluster info.
+            LOGE("Failed to generate split run, keep the whole run instead");
+            run.fIndex = newRunGlobalIndex++;
+            updateSplitRunClusterInfo(run, false);
+            runs.push_back(run);
+            while (!splitPoints.empty() && splitPoints.front().runIndex == runIndex) {
+                splitPoints.pop_front();
+            }
         }
     }
 }

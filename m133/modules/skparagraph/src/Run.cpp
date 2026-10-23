@@ -504,20 +504,26 @@ void Run::updateSplitRunMesureInfo(Run& splitRun, size_t startClusterPos, size_t
     splitRun.fHalfLetterspacings.push_back(fHalfLetterspacings[startClusterPos]);
 }
 
-void Run::generateSplitRun(Run& splitRun, const SplitPoint& splitPoint) {
+bool Run::generateSplitRun(Run& splitRun, const SplitPoint& splitPoint) {
     if (fGlyphData->positions.empty()) {
-        return;
+        LOGE("Failed to split run: empty glyph positions");
+        return false;
     }
-    size_t tailIndex = splitPoint.tailClusterIndex;
-    size_t headIndex = splitPoint.headClusterIndex;
+    size_t tailIndex = splitPoint.tailTextIndex;
+    size_t headIndex = splitPoint.headTextIndex;
+    if (headIndex >= tailIndex || headIndex < fTextRange.start || tailIndex > fTextRange.end) {
+        LOGE("Failed to split run: split point out of text range");
+        return false;
+    }
     updateSplitRunRangeInfo(splitRun, headIndex, tailIndex);
     size_t startClusterPos = findSplitClusterPos(headIndex - fClusterStart);
     size_t endClusterPos = findSplitClusterPos(tailIndex - fClusterStart);
     if (endClusterPos >= clusterIndexes().size() || startClusterPos >= clusterIndexes().size()) {
         LOGE("Failed to find clusterPos by binary search algorithm");
-        return;
+        return false;
     }
     updateSplitRunMesureInfo(splitRun, startClusterPos, endClusterPos);
+    return true;
 }
 
 void Run::replaceCompressedGlyphs(size_t glyphStart, size_t oldCount, const Run& shapedRun) {

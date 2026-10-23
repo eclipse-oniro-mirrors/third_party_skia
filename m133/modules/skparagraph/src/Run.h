@@ -79,8 +79,8 @@ enum class ScaleOP {
 struct SplitPoint {
     size_t lineIndex{EMPTY_INDEX};
     size_t runIndex{EMPTY_INDEX};
-    size_t headClusterIndex{EMPTY_INDEX};
-    size_t tailClusterIndex{EMPTY_INDEX};
+    size_t headTextIndex{EMPTY_INDEX};
+    size_t tailTextIndex{EMPTY_INDEX};
 };
 
 struct ScaleParam {
@@ -190,7 +190,7 @@ public:
     size_t findSplitClusterPos(size_t target);
     void updateSplitRunRangeInfo(Run& splitRun, size_t headIndex, size_t tailIndex);
     void updateSplitRunMesureInfo(Run& splitRun, size_t startClusterPos, size_t endClusterPos);
-    void generateSplitRun(Run& splitRun, const SplitPoint& splitPoint);
+    bool generateSplitRun(Run& splitRun, const SplitPoint& splitPoint);
     void updatePlaceholderAlignmentIfNeeded(PlaceholderAlignment& alignment, TextVerticalAlign paragraphAlignment);
     // Replaces N glyphs at glyphStart with M glyphs from shapedRun (in-place, no split).
     // Recalculates positions for replaced glyphs and cascades spacing to remaining glyphs.
