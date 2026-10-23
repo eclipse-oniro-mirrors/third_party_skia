@@ -4151,7 +4151,7 @@ static bool requestsCustomFont(const std::vector<SkString>& fontFamilies,
         return false;
     }
     for (const auto& family : fontFamilies) {
-        if (!family.startsWith("HarmonyOS") && !family.startsWith("Sans-serif")) {
+        if (!family.equals("HarmonyOS Sans SC") && !family.equals("Sans-serif")) {
             return true;
         }
     }
