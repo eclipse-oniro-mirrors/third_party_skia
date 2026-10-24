@@ -397,6 +397,7 @@ private:
     SkRect getAllShadowsRect(SkScalar x, SkScalar y) const;
     void refreshLineRuns();
     void refreshLineEllipsis();
+    void refreshLineHyphen();
     void refreshLineMetrics();
 #endif
 

@@ -3792,6 +3792,10 @@ void TextLine::applyVerticalShift() {
     if (ellipsis()) {
         shiftTextByVerticalAlignment(*ellipsis(), verticalAlignment);
     }
+
+    if (fHyphenRun != nullptr && fBreakWithHyphen) {
+        shiftTextByVerticalAlignment(*fHyphenRun, verticalAlignment);
+    }
 }
 
 void TextLine::refreshLineEllipsis() {
@@ -3810,6 +3814,22 @@ void TextLine::refreshLineEllipsis() {
     size_t runIndex = fOwner->cluster(clusterIndex).runIndex() + fOwner->getEllipsisRunIndexOffset();
     ellipsis()->fIndex = runIndex;
     setEllipsisRunIndex(runIndex);
+}
+
+void TextLine::refreshLineHyphen() {
+    if (fHyphenRun == nullptr || !fBreakWithHyphen || fClusterRange.end == 0) {
+        return;
+    }
+
+    // splitRuns() re-indexes all runs, so the stale fHyphenIndex recorded at
+    // line-breaking time no longer matches any run of this line and the hyphen
+    // glyph would never be painted. Re-attach the hyphen run to the run that
+    // now contains the last cluster of this line (the same cluster that
+    // setBreakWithHyphen() used).
+    ClusterIndex endIx = fClusterRange.end - 1;
+    size_t runIndex = fOwner->cluster(endIx).runIndex();
+    fHyphenRun->fIndex = runIndex;
+    fHyphenIndex = runIndex;
 }
 
 void TextLine::refreshLineRuns() {
@@ -3853,6 +3873,8 @@ void TextLine::refreshLineRuns() {
 
 void TextLine::refresh() {
     refreshLineEllipsis();
+    // Refresh hyphen run index (runs may have been re-indexed by splitRuns)
+    refreshLineHyphen();
     // Refresh line runs order
     refreshLineRuns();
 }
