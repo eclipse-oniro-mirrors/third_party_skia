@@ -215,12 +215,12 @@ public:
 
 #ifdef ENABLE_TEXT_ENHANCE
     void format(TextAlign align, SkScalar maxWidth, EllipsisModal ellipsisModal);
-    SkScalar trailingBorderGap() const;
-    SkScalar materializedBorderGapBefore(TextIndex textIndex) const;
     SkScalar autoSpacing();
     void resetLineAutoSpacing(size_t resetStart);
     bool isRTLPunctuationHanging(SkScalar delta, SkScalar maxWidth);
     bool hasRTLTrailingWhiteSpace() const;
+    SkScalar trailingBorderGap() const;
+    SkScalar materializedBorderGapBefore(TextIndex textIndex) const;
 #else
 	void format(TextAlign align, SkScalar maxWidth);
 #endif
