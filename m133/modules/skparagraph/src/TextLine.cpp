@@ -4155,7 +4155,16 @@ void TextLine::refreshLineMetrics() {
     for (size_t clusterIndex = fGhostClusterRange.start; clusterIndex < fGhostClusterRange.end; ++clusterIndex) {
         Run& run = fOwner->cluster(clusterIndex).run();
         fSizes.add(&run);
+#ifdef ENABLE_TEXT_ENHANCE
+        // Mirror the TextLine constructor: the border reservation must survive the
+        // updateFontSize/reflow metric rebuild, or getRectForRange/getLineMetrics
+        // lose the +2w reservation those paths recompute
+        fMaxRunMetrics.add(InternalLineMetrics(run.correctAscent() - run.borderWidth(),
+                                               run.correctDescent() + run.borderWidth(),
+                                               run.fFontMetrics.fLeading));
+#else
         fMaxRunMetrics.add(InternalLineMetrics(run.correctAscent(), run.correctDescent(), run.fFontMetrics.fLeading));
+#endif
     }
 
     fAdvance.fY = fSizes.height();

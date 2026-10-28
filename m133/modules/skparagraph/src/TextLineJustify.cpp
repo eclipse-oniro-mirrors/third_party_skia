@@ -223,8 +223,11 @@ void TextLineJustify::justifyShiftCluster(const SkScalar maxWidth,
     // (fAdvance.fX, which also carries the hyphen run advance). Only the space left
     // beyond that gap-inclusive width may be distributed; the raw cluster sum used
     // here before would treat the materialized gaps as free space and stretch them.
-    SkScalar allocatedWidth = maxWidth - textLineRef.widthWithoutEllipsis() -
-                              (textLineRef.ellipsis() ? textLineRef.ellipsis()->fAdvanceX() : 0);
+    // A line whose trailing gap pushes it past maxWidth yields a negative base: clamp
+    // it to zero so justify degrades to no stretching and the shift verification
+    // below holds instead of aborting debug builds.
+    SkScalar allocatedWidth = std::max(0.0f, maxWidth - textLineRef.widthWithoutEllipsis() -
+                              (textLineRef.ellipsis() ? textLineRef.ellipsis()->fAdvanceX() : 0));
     const SkScalar verifyShift = allocatedWidth;
     // Allocate offsets for each level
     allocateHighLevelOffsets(ideographicMaxLen, clusterLevels, allocatedWidth);

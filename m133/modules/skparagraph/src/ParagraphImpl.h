@@ -481,7 +481,17 @@ public:
     void applySpacingAndBuildClusterTable();
     void buildClusterTable();
 #ifdef ENABLE_TEXT_ENHANCE
-    void markBorderClusters();
+    // Carries the border-group state across the cluster-creation loop in buildClusterTable
+    // so every cluster is marked at birth instead of a second pass over the table.
+    struct BorderMarkState {
+        size_t blockIndex{0};
+        int32_t segmentId{0};
+        bool prevHasBorder{false};
+        uint32_t prevStyleId{0};
+        RectStyle prevRect{};
+        bool valid{false}; // false when the block table is empty: skip marking
+    };
+    void markClusterBorder(Cluster& cluster, Run& run, BorderMarkState& state);
 #endif
     bool shapeTextIntoEndlessLine();
     void breakShapedTextIntoLines(SkScalar maxWidth);

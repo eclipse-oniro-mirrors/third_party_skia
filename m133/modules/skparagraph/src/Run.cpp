@@ -414,6 +414,7 @@ Run::Run(const Run& run, size_t runIndex)
       fTopInGroup(run.fTopInGroup),
       fBottomInGroup(run.fBottomInGroup),
       fMaxRoundRectRadius(run.fMaxRoundRectRadius),
+      fBorderWidth(run.fBorderWidth),
       indexInLine(run.indexInLine),
       fCompressionBaselineShift(run.fCompressionBaselineShift),
       fVerticalAlignShift(run.fVerticalAlignShift),
