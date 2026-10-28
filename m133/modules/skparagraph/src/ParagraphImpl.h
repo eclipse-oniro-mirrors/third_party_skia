@@ -360,9 +360,12 @@ public:
     const SkString& getText() const { return fText; }
 #ifdef ENABLE_TEXT_ENHANCE
     bool hasTabCharacter() const { return fHasTabCharacter; }
+    bool hasBorderClusters() const { return fHasBorderClusters; }
 #endif
-    void includeFontPadding(
-        bool isFirstLine, bool isLastLine, InternalLineMetrics& metrics, const TextRange& textRange);
+    void includeFontPadding(bool isFirstLine,
+                            bool isLastLine,
+                            InternalLineMetrics& metrics,
+                            const TextRange& textRange);
     void updateSplitRunClusterInfo(const Run& run, bool isSplitRun);
     void refreshLines();
     bool isTailOfLineNeedSplit(const Run& lineLastRun, size_t lineEnd, bool hasGenerated);
@@ -477,6 +480,9 @@ public:
 #endif
     void applySpacingAndBuildClusterTable();
     void buildClusterTable();
+#ifdef ENABLE_TEXT_ENHANCE
+    void markBorderClusters();
+#endif
     bool shapeTextIntoEndlessLine();
     void breakShapedTextIntoLines(SkScalar maxWidth);
 
@@ -661,6 +667,7 @@ private:
     SkString fText;
 #ifdef ENABLE_TEXT_ENHANCE
     bool fHasTabCharacter{false};
+    bool fHasBorderClusters{false};
 #endif
 
     // Internal structures

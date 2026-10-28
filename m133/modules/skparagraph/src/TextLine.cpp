@@ -220,8 +220,14 @@ TextLine::TextLine(ParagraphImpl* owner,
     for (auto runIndex = start.runIndex(); runIndex <= end.runIndex(); ++runIndex) {
         auto& run = fOwner->run(runIndex);
         runLevels[runLevelsIndex++] = run.fBidiLevel;
-        fMaxRunMetrics.add(
-            InternalLineMetrics(run.correctAscent(), run.correctDescent(), run.fFontMetrics.fLeading));
+#ifdef ENABLE_TEXT_ENHANCE
+        fMaxRunMetrics.add(InternalLineMetrics(run.correctAscent() - run.borderWidth(),
+                                               run.correctDescent() + run.borderWidth(),
+                                               run.fFontMetrics.fLeading));
+#else
+        fMaxRunMetrics.add(InternalLineMetrics(
+                run.correctAscent(), run.correctDescent(), run.fFontMetrics.fLeading));
+#endif
         if (run.isPlaceholder()) {
             placeholdersInOriginalOrder.push_back(runIndex);
         }
@@ -749,21 +755,60 @@ void TextLine::format(TextAlign align, SkScalar maxWidth) {
 
 #ifdef ENABLE_TEXT_ENHANCE
 SkScalar TextLine::autoSpacing() {
-    if (!fOwner->isAutoSpaceEnabled()) {
+    if (!fOwner->isAutoSpaceEnabled() && !fOwner->hasBorderClusters()) {
         return 0;
     }
     SkScalar spacing = 0.0;
-    auto prevCluster = fOwner->cluster(fGhostClusterRange.start);
-    for (auto clusterIndex = fGhostClusterRange.start + 1; clusterIndex < fGhostClusterRange.end; ++clusterIndex) {
-        auto prevSpacing = spacing;
+    const bool autoSpaceEnabled = fOwner->isAutoSpaceEnabled();
+    for (auto clusterIndex = fGhostClusterRange.start; clusterIndex < fGhostClusterRange.end;
+         ++clusterIndex) {
         auto& cluster = fOwner->cluster(clusterIndex);
-        spacing += cluster.needAutoSpacing() ? prevCluster.getFontSize() / AUTO_SPACING_WIDTH_RATIO : 0;
+        auto prevSpacing = spacing;
+        if (clusterIndex > fGhostClusterRange.start && autoSpaceEnabled &&
+            cluster.needAutoSpacing()) {
+            // auto spacing stays BETWEEN clusters exactly as before
+            spacing += fOwner->cluster(clusterIndex - 1).getFontSize() / AUTO_SPACING_WIDTH_RATIO;
+        }
+        const Cluster* prev = (clusterIndex > fGhostClusterRange.start)
+                                      ? &fOwner->cluster(clusterIndex - 1)
+                                      : nullptr;
+        spacing += cluster.borderGapBefore(prev);
         spacingCluster(&cluster, spacing, prevSpacing);
-        prevCluster = cluster;
     }
+    spacing += trailingBorderGap();
     this->fWidthWithSpaces += spacing;
     this->fAdvance.fX += spacing;
     return spacing;
+}
+
+// Trailing border gap after the line's last non-space cluster: a box cut by the line
+// break needs w on its right too. Skipping trailing whitespace matches how the line
+// trims ghost spaces.
+SkScalar TextLine::trailingBorderGap() const {
+    for (auto clusterIndex = fGhostClusterRange.end; clusterIndex > fGhostClusterRange.start;
+         --clusterIndex) {
+        const auto& cluster = fOwner->cluster(clusterIndex - 1);
+        if (cluster.isWhitespaceBreak()) {
+            continue;
+        }
+        return cluster.hasBorder() ? cluster.borderWidth() : 0.0f;
+    }
+    return 0.0f;
+}
+
+// Border gap autoSpacing charged before the cluster containing textIndex. Gaps belong
+// outside the box, so style-block clips skip it at their left edge; only gaps inside
+// this line's ghost range were materialized.
+SkScalar TextLine::materializedBorderGapBefore(TextIndex textIndex) const {
+    auto clusterIndex = fOwner->clusterIndex(textIndex);
+    if (clusterIndex == EMPTY_INDEX || clusterIndex < fGhostClusterRange.start ||
+        clusterIndex >= fGhostClusterRange.end) {
+        return 0.0f;
+    }
+    const Cluster* prev = (clusterIndex > fGhostClusterRange.start)
+                                  ? &fOwner->cluster(clusterIndex - 1)
+                                  : nullptr;
+    return fOwner->cluster(clusterIndex).borderGapBefore(prev);
 }
 
 void TextLine::resetLineAutoSpacing(size_t resetStart) {
@@ -1414,6 +1459,19 @@ void TextLine::createTailEllipsis(SkScalar maxWidth, const SkString& ellipsis, b
     // Go through the clusters in the reverse logical order
     // taking off cluster by cluster until the ellipsis fits
     SkScalar width = fAdvance.fX;
+    const SkScalar oldTrailingGap = trailingBorderGap();
+    // Gap materialized (by autoSpacing) at cluster index i of the original line, i.e. the part
+    // not already carried by usingAutoSpaceWidth: with auto spacing enabled that correction
+    // contains the border gap too (spacingCluster writes both into fAutoSpacings), so adding
+    // it here would subtract the same gap twice.
+    auto materializedGapAt = [this](size_t i) -> SkScalar {
+        if (fOwner->isAutoSpaceEnabled()) {
+            return 0.0f;
+        }
+        const Cluster& c = fOwner->cluster(i);
+        const Cluster* prev = (i > fClusterRange.start) ? &fOwner->cluster(i - 1) : nullptr;
+        return c.borderGapBefore(prev);
+    };
     RunIndex lastRun = EMPTY_RUN;
     std::unique_ptr<Run> ellipsisRun;
     int wordCount = 0;
@@ -1455,21 +1513,26 @@ void TextLine::createTailEllipsis(SkScalar maxWidth, const SkString& ellipsis, b
         // See if it fits
         if (ellipsisRun != nullptr && width + ellipsisRun->advance().fX > maxWidth) {
             if (!cluster.isHardBreak()) {
-                width -= usingAutoSpaceWidth(&cluster);
+                width -= usingAutoSpaceWidth(&cluster) + materializedGapAt(clusterIndex - 1);
             }
             // Continue if the ellipsis does not fit
-            iterForWord = (wordCount != 1 && wordBreakType != WordBreakType::BREAK_ALL && !cluster.isWordBreak());
+            iterForWord = (wordCount != 1 && wordBreakType != WordBreakType::BREAK_ALL &&
+                           !cluster.isWordBreak());
             if (std::floor(width) > 0) {
                 continue;
             }
         }
 
         if (iterForWord && !cluster.isWordBreak()) {
-            width -= usingAutoSpaceWidth(&cluster);
+            width -= usingAutoSpaceWidth(&cluster) + materializedGapAt(clusterIndex - 1);
             if (std::floor(width) > 0) {
                 continue;
             }
         }
+
+        // Swap the old trailing gap for the new line end's own trailing gap: the removed
+        // clusters took theirs off, the surviving last cluster still needs room for its box.
+        width = width - oldTrailingGap + (cluster.hasBorder() ? cluster.borderWidth() : 0.0f);
 
         // Update the ellipsis attributes and line attributes.
         tailEllipsisUpdateEllipsis(cluster, ellipsisRun, ellipsis, width);
@@ -2574,6 +2637,16 @@ SkScalar TextLine::iterateThroughSingleRunByStyles(TextAdjustment textAdjustment
         auto runStyleTextRange = TextRange(start, start + size);
         ClipContext clipContext = correctContext(runStyleTextRange, textOffsetInRun);
         textOffsetInRun += clipContext.clip.width();
+#ifdef ENABLE_TEXT_ENHANCE
+        // Border gaps belong outside the box: move the clip's left edge past the
+        // block's start gap so boxes, decorations and shadows hug the text. The
+        // accumulation above keeps the legacy width semantics, so run positioning
+        // and the totalWidth check are unaffected. Auto-spacing gaps return 0 here
+        // and keep their legacy clip coverage.
+        if (styleType != StyleType::kNone && run->leftToRight()) {
+            clipContext.clip.fLeft += this->materializedBorderGapBefore(runStyleTextRange.start);
+        }
+#endif
         if (clipContext.clip.height() == 0) {
             continue;
         }

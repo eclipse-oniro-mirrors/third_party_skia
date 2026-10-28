@@ -1739,7 +1739,54 @@ void ParagraphImpl::buildClusterTable()
     }
     fClustersIndexFromCodeUnit[fText.size()] = fClusters.size();
     fClusters.emplace_back(this, EMPTY_RUN, 0, 0, this->text({fText.size(), fText.size()}), 0, 0);
+#ifdef ENABLE_TEXT_ENHANCE
+    markBorderClusters();
+#endif
 }
+
+#ifdef ENABLE_TEXT_ENHANCE
+// Marks every cluster with the effective border width of its block's RectStyle and a
+// border-box segment id: a maximal run of adjacent clusters in one styleId + RectStyle
+// group, matching TextLine::paintRoundRectGroup merging. A cluster covered by several
+// blocks follows the block at its start (initLimitHeightParam precedent). Also raises
+// each owning run's border width to the maximum of its clusters for line-height
+// reservation. The trailing sentinel cluster is skipped.
+void ParagraphImpl::markBorderClusters() {
+    if (fTextStyles.empty()) {
+        return;
+    }
+    size_t blockIndex = 0;
+    int32_t segmentId = 0;
+    bool prevHasBorder = false;
+    uint32_t prevStyleId = 0;
+    RectStyle prevRect{};
+    for (size_t i = 0; i + 1 < fClusters.size(); ++i) {
+        auto& cluster = fClusters[i];
+        while (blockIndex + 1 < fTextStyles.size() &&
+               fTextStyles[blockIndex + 1].fRange.start <= cluster.textRange().start) {
+            ++blockIndex;
+        }
+        const TextStyle& style = fTextStyles[blockIndex].fStyle;
+        const RectStyle& rect = style.getBackgroundRect();
+        const bool hasBorder = rect.borderWidth > 0 && rect.borderColor != 0;
+        if (hasBorder) {
+            fHasBorderClusters = true;
+            const bool sameGroup =
+                    prevHasBorder && style.getStyleId() == prevStyleId && rect == prevRect;
+            if (!sameGroup) {
+              ++segmentId;
+            }
+            cluster.setBorderWidth(rect.borderWidth);
+            cluster.setBorderSegmentId(segmentId);
+            auto& run = fRuns[cluster.runIndex()];
+            run.setBorderWidth(std::fmax(run.borderWidth(), rect.borderWidth));
+        }
+        prevHasBorder = hasBorder;
+        prevStyleId = style.getStyleId();
+        prevRect = rect;
+    }
+}
+#endif
 
 bool ParagraphImpl::shapeTextIntoEndlessLine() {
 #ifdef ENABLE_TEXT_ENHANCE
@@ -3368,6 +3415,7 @@ std::unique_ptr<Paragraph> ParagraphImpl::CloneSelf()
     paragraph->fText = this->fText;
 #ifdef ENABLE_TEXT_ENHANCE
     paragraph->fHasTabCharacter = this->fHasTabCharacter;
+    paragraph->fHasBorderClusters = this->fHasBorderClusters;
 #endif
 
     paragraph->fState = this->fState;

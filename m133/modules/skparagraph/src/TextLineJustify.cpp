@@ -215,13 +215,16 @@ SkScalar TextLineJustify::calculateClusterShift(
     return step;
 }
 
-void TextLineJustify::justifyShiftCluster(const SkScalar maxWidth, SkScalar textLen, SkScalar ideographicMaxLen,
-    size_t prevClusterNotSpaceCount, ClusterLevelsIndices& clusterLevels)
-{
-    SkScalar allocatedWidth = maxWidth - textLen - (textLineRef.ellipsis() ? textLineRef.ellipsis()->fAdvanceX() : 0);
-    if (textLineRef.getBreakWithHyphen()) {
-        allocatedWidth -= textLineRef.fHyphenRun->fAdvanceX();
-    }
+void TextLineJustify::justifyShiftCluster(const SkScalar maxWidth,
+                                          SkScalar ideographicMaxLen,
+                                          size_t prevClusterNotSpaceCount,
+                                          ClusterLevelsIndices& clusterLevels) {
+    // Border gaps are materialized into fAutoSpacings and counted in the line width
+    // (fAdvance.fX, which also carries the hyphen run advance). Only the space left
+    // beyond that gap-inclusive width may be distributed; the raw cluster sum used
+    // here before would treat the materialized gaps as free space and stretch them.
+    SkScalar allocatedWidth = maxWidth - textLineRef.widthWithoutEllipsis() -
+                              (textLineRef.ellipsis() ? textLineRef.ellipsis()->fAdvanceX() : 0);
     const SkScalar verifyShift = allocatedWidth;
     // Allocate offsets for each level
     allocateHighLevelOffsets(ideographicMaxLen, clusterLevels, allocatedWidth);
@@ -304,7 +307,7 @@ bool TextLineJustify::justify(SkScalar maxWidth)
         textLineRef.justifyUpdateRtlWidth(maxWidth, textLen);
         return false;
     }
-    justifyShiftCluster(maxWidth, textLen, ideographicMaxLen, prevClusterNotSpaceCount, clusterLevels);
+    justifyShiftCluster(maxWidth, ideographicMaxLen, prevClusterNotSpaceCount, clusterLevels);
     return true;
 }
 

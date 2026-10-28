@@ -1103,6 +1103,23 @@ bool Cluster::isStartCombineBreak() const {
 bool Cluster::isEndCombineBreak() const {
     return fOwner->codeUnitHasProperty(fTextRange.end, SkUnicode::CodeUnitFlags::kCombine);
 }
+
+// Horizontal gap that must precede this cluster inside a line: the cluster's border
+// width when the cluster enters a border box (no in-line predecessor, or the previous
+// cluster is outside the box group), and the previous cluster's border width when this
+// is the first non-border cluster after a box.
+SkScalar Cluster::borderGapBefore(const Cluster* prev) const {
+    if (prev == nullptr) {
+        return hasBorder() ? fBorderWidth : 0.0f;
+    }
+    if (hasBorder() && (!prev->hasBorder() || prev->fBorderSegmentId != fBorderSegmentId)) {
+        return fBorderWidth;
+    }
+    if (!hasBorder() && prev->hasBorder()) {
+        return prev->fBorderWidth;
+    }
+    return 0.0f;
+}
 #endif
 }  // namespace textlayout
 }  // namespace skia
