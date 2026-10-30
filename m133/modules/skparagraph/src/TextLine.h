@@ -217,6 +217,7 @@ public:
     void format(TextAlign align, SkScalar maxWidth, EllipsisModal ellipsisModal);
     SkScalar trailingBorderGap() const;
     SkScalar materializedBorderGapBefore(TextIndex textIndex) const;
+    SkScalar borderGapAfterRange(TextRange range, TextIndex queryEnd) const;
     SkScalar trailingGhostAdvanceInRange(TextRange range) const;
     SkScalar autoSpacing();
     void resetLineAutoSpacing(size_t resetStart);

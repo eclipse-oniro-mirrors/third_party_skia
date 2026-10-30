@@ -845,6 +845,54 @@ SkScalar TextLine::materializedBorderGapBefore(TextIndex textIndex) const {
     return fOwner->cluster(clusterIndex).borderGapBefore(prev);
 }
 
+// Border gap that follows the range's end on this line: the box's right border width
+// when the range ends at the box's right edge. The exit gap is charged to the cluster
+// after the range (fAutoSpacings) or to the line advance (trailingBorderGap), so width
+// computations that stop at the range's last cluster never see it; the caller extends
+// the rect's right edge by this value to cover the right border, mirroring the left
+// edge (positionX already excludes the range's entering gap). The extension applies
+// only when the query (clamped to this line) also ends at the box edge: when the query
+// continues past the box on the same line, the following content's rect starts at the
+// box's text edge (its own left edge spans the exit gap) and already covers the zone.
+SkScalar TextLine::borderGapAfterRange(TextRange range, TextIndex queryEnd) const {
+    if (range.empty()) {
+        return 0.0f;
+    }
+    auto lastIdx = fOwner->clusterIndex(range.end - 1);
+    if (lastIdx == EMPTY_INDEX || lastIdx < fGhostClusterRange.start ||
+        lastIdx >= fGhostClusterRange.end) {
+        return 0.0f;
+    }
+    const auto& endCluster = fOwner->cluster(lastIdx);
+    if (!endCluster.hasBorder()) {
+        return 0.0f;
+    }
+    // The line's trailing whitespace suffix never carries a box's right border further
+    // out (same skip rule as trailingBorderGap: the line trims ghost spaces).
+    auto lastVisibleEnd = fGhostClusterRange.end;
+    while (lastVisibleEnd > fGhostClusterRange.start &&
+           fOwner->cluster(lastVisibleEnd - 1).isWhitespaceBreak()) {
+        --lastVisibleEnd;
+    }
+    if (lastIdx + 1 < lastVisibleEnd) {
+        // Mid-line the box is a contiguous cluster segment, so the immediate next
+        // cluster decides whether the box continues past the range end (a same-segment
+        // cluster means the range stops inside the box, where no border is drawn).
+        const auto& next = fOwner->cluster(lastIdx + 1);
+        if (next.hasBorder() && next.borderSegmentId() == endCluster.borderSegmentId()) {
+            return 0.0f;
+        }
+    }
+    // The range ends at the box's right edge on this line (followed by other content,
+    // by the trailing whitespace, or by the line break of a box cut across lines). Skip
+    // the extension when the query keeps going on this line: the next run's rect then
+    // covers the border zone and extending here would only stop the boxes from merging.
+    if (std::min(queryEnd, this->textWithNewlines().end) > endCluster.textRange().end) {
+        return 0.0f;
+    }
+    return endCluster.borderWidth();
+}
+
 void TextLine::resetLineAutoSpacing(size_t resetStart) {
     for (auto clusterIndex = resetStart; clusterIndex < fGhostClusterRange.end; ++clusterIndex) {
         auto& cluster = fOwner->cluster(clusterIndex);
@@ -3107,6 +3155,16 @@ void TextLine::getRectsForRange(TextRange textRange0,
                     intersect, run, runOffsetInLine, 0, true, TextAdjustment::GraphemeGluster);
             SkRect clip = context.clip;
             clip.offset(lineContext.fTextShift - context.fTextShift, 0);
+#ifdef ENABLE_TEXT_ENHANCE
+            // The box's right border gap is charged to the cluster after the range
+            // (fAutoSpacings) or to the line advance (trailingBorderGap), so the raw
+            // clip's right edge stops at the last glyph. Extend it over the following
+            // gap so the rect covers the right border, mirroring the left edge which
+            // already spans the range's entering gap (positionX uses fAutoSpacings.fY).
+            if (run->leftToRight()) {
+                clip.fRight += this->borderGapAfterRange(intersect, textRange0.end);
+            }
+#endif
 
             switch (rectHeightStyle) {
                 case RectHeightStyle::kMax:
