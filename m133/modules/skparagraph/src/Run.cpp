@@ -1114,7 +1114,9 @@ SkScalar Cluster::borderGapBefore(const Cluster* prev) const {
         return hasBorder() ? fBorderWidth : 0.0f;
     }
     if (hasBorder() && (!prev->hasBorder() || prev->fBorderSegmentId != fBorderSegmentId)) {
-        return fBorderWidth;
+        // Entering a new box; when the previous cluster ends a different box, the boundary
+        // carries both the old box's exit w and the new box's entry w.
+        return prev->hasBorder() ? prev->fBorderWidth + fBorderWidth : fBorderWidth;
     }
     if (!hasBorder() && prev->hasBorder()) {
         return prev->fBorderWidth;

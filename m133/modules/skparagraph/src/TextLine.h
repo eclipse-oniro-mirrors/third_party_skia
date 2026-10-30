@@ -215,12 +215,12 @@ public:
 
 #ifdef ENABLE_TEXT_ENHANCE
     void format(TextAlign align, SkScalar maxWidth, EllipsisModal ellipsisModal);
+    SkScalar trailingBorderGap() const;
+    SkScalar materializedBorderGapBefore(TextIndex textIndex) const;
     SkScalar autoSpacing();
     void resetLineAutoSpacing(size_t resetStart);
     bool isRTLPunctuationHanging(SkScalar delta, SkScalar maxWidth);
     bool hasRTLTrailingWhiteSpace() const;
-    SkScalar trailingBorderGap() const;
-    SkScalar materializedBorderGapBefore(TextIndex textIndex) const;
 #else
 	void format(TextAlign align, SkScalar maxWidth);
 #endif
@@ -388,6 +388,11 @@ private:
                                   bool hasBorder,
                                   SkScalar left,
                                   SkScalar right) const;
+    SkRRect computeTextTightRoundRect(const RoundRectAttr& startAttr,
+                                      SkScalar left,
+                                      SkScalar right,
+                                      SkScalar top,
+                                      SkScalar bottom) const;
     void spacingCluster(const Cluster* cluster, SkScalar spacing, SkScalar prevSpacing);
     bool hasBackgroundRect(const RoundRectAttr& attr) const;
     void computeRoundRect(int& index, int& preIndex, std::vector<Run*>& groupRuns, Run* run);

@@ -1089,22 +1089,34 @@ int TextLine::paintRoundRectGroup(int startIndex,
     // uniform height across all runs.
     SkScalar left = startAttr.rect.left();
     SkScalar right = startAttr.rect.right();
+    SkScalar top = startAttr.rect.top();
+    SkScalar bottom = startAttr.rect.bottom();
     int endIndex = startIndex;
     if (hasBorder) {
         int attrCount = static_cast<int>(fRoundRectAttrs.size());
         while (endIndex + 1 < attrCount && hasBackgroundRect(fRoundRectAttrs[endIndex + 1]) &&
                fRoundRectAttrs[endIndex + 1].styleId == startAttr.styleId &&
                fRoundRectAttrs[endIndex + 1].roundRectStyle == startAttr.roundRectStyle) {
-            const SkRect& rect = fRoundRectAttrs[++endIndex].rect;
-            left = std::fmin(left, rect.left());
-            right = std::fmax(right, rect.right());
+            const RoundRectAttr& attr = fRoundRectAttrs[++endIndex];
+            left = std::fmin(left, attr.rect.left());
+            right = std::fmax(right, attr.rect.right());
+            top = std::fmin(top, attr.rect.top());
+            bottom = std::fmax(bottom, attr.rect.bottom());
         }
     }
     SkRRect skRRect = computeGroupRoundRect(startAttr, hasBorder, left, right);
     skRRect.offset(x + this->offset().x(), y + this->offset().y());
     if (hasBorder) {
-        painter->drawRRectWithBorder(
-                skRRect, rectStyle.color, rectStyle.borderColor, rectStyle.borderWidth);
+        // The background keeps the line-height box; the border hugs the text box. The fill
+        // of the border call is fully transparent so the painter draws the stroke only,
+        // and no painter implementation has to change.
+        if (rectStyle.color != 0) {
+            painter->drawRRect(skRRect, rectStyle.color);
+        }
+        SkRRect borderRRect = computeTextTightRoundRect(startAttr, left, right, top, bottom);
+        borderRRect.offset(x + this->offset().x(), y + this->offset().y());
+        painter->drawRRectWithBorder(borderRRect, SK_ColorTRANSPARENT,
+                                     rectStyle.borderColor, rectStyle.borderWidth);
     } else {
         painter->drawRRect(skRRect, rectStyle.color);
     }
@@ -1143,6 +1155,32 @@ SkRRect TextLine::computeGroupRoundRect(const RoundRectAttr& startAttr,
     const SkVector radii[4] = {
             {ltRadius, ltRadius}, {rtRadius, rtRadius}, {rbRadius, rbRadius}, {lbRadius, lbRadius}};
     SkRect skRect(SkRect::MakeLTRB(left, run->getTopInGroup(), right, run->getBottomInGroup()));
+    SkRRect skRRect;
+    skRRect.setRectRadii(skRect, radii);
+    return skRRect;
+}
+
+// Builds the rounded rect that hugs the group's text: the same [left, right] span as the
+// background box but the vertical span of the text itself, so the border stroke follows the
+// glyphs instead of the line height. Every radius is clamped into [0, half of the smaller
+// side] so the complete box stays valid.
+SkRRect TextLine::computeTextTightRoundRect(const RoundRectAttr& startAttr,
+                                            SkScalar left,
+                                            SkScalar right,
+                                            SkScalar top,
+                                            SkScalar bottom) const {
+    const RectStyle& rectStyle = startAttr.roundRectStyle;
+    SkScalar maxRadius = std::fmax(std::fmin(right - left, bottom - top) / 2, 0.0f);
+    auto cornerRadius = [maxRadius](SkScalar radius) -> SkScalar {
+        return std::fmax(std::fmin(radius, maxRadius), 0.0f);
+    };
+    SkScalar ltRadius = cornerRadius(rectStyle.leftTopRadius);
+    SkScalar rtRadius = cornerRadius(rectStyle.rightTopRadius);
+    SkScalar rbRadius = cornerRadius(rectStyle.rightBottomRadius);
+    SkScalar lbRadius = cornerRadius(rectStyle.leftBottomRadius);
+    const SkVector radii[4] = {
+            {ltRadius, ltRadius}, {rtRadius, rtRadius}, {rbRadius, rbRadius}, {lbRadius, lbRadius}};
+    SkRect skRect(SkRect::MakeLTRB(left, top, right, bottom));
     SkRRect skRRect;
     skRRect.setRectRadii(skRect, radii);
     return skRRect;
