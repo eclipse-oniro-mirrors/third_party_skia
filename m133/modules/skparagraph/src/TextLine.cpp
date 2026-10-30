@@ -783,17 +783,51 @@ SkScalar TextLine::autoSpacing() {
 
 // Trailing border gap after the line's last non-space cluster: a box cut by the line
 // break needs w on its right too. Skipping trailing whitespace matches how the line
-// trims ghost spaces.
+// trims ghost spaces. When the first trailing space sits outside the box or opens a
+// different box, the autoSpacing walk already charged this box's exit width at that
+// space's transition (Cluster::borderGapBefore); adding it here as well would count
+// the same w twice and push the line advance past the box.
 SkScalar TextLine::trailingBorderGap() const {
-    for (auto clusterIndex = fGhostClusterRange.end; clusterIndex > fGhostClusterRange.start;
-         --clusterIndex) {
-        const auto& cluster = fOwner->cluster(clusterIndex - 1);
-        if (cluster.isWhitespaceBreak()) {
-            continue;
-        }
-        return cluster.hasBorder() ? cluster.borderWidth() : 0.0f;
+    auto lastVisible = fGhostClusterRange.end;
+    while (lastVisible > fGhostClusterRange.start &&
+           fOwner->cluster(lastVisible - 1).isWhitespaceBreak()) {
+        --lastVisible;
     }
-    return 0.0f;
+    if (lastVisible == fGhostClusterRange.start) {
+        return 0.0f;
+    }
+    const auto& endCluster = fOwner->cluster(lastVisible - 1);
+    if (!endCluster.hasBorder()) {
+        return 0.0f;
+    }
+    if (lastVisible < fGhostClusterRange.end) {
+        const auto& firstTrailing = fOwner->cluster(lastVisible);
+        if (!firstTrailing.hasBorder() ||
+            firstTrailing.borderSegmentId() != endCluster.borderSegmentId()) {
+            return 0.0f;
+        }
+    }
+    return endCluster.borderWidth();
+}
+
+// Advance of the line's trailing ghost spaces whose text falls inside the range: the
+// part a border box's clip must not count when its style block reaches into the line's
+// trailing whitespace. Ghost spaces carry no shift of their own (border interiors
+// charge no gap and trailing spaces are never stretched), so the plain cluster widths
+// add up exactly; a hard break cluster is skipped because the clip machinery itself
+// never counts its advance (getRunClipContextByRange cuts at its startPos). RTL runs
+// mirror the line end at the left edge and are not trimmed.
+SkScalar TextLine::trailingGhostAdvanceInRange(TextRange range) const {
+    SkScalar advance = 0.0f;
+    for (auto clusterIndex = fClusterRange.end; clusterIndex < fGhostClusterRange.end;
+         ++clusterIndex) {
+        const auto& cluster = fOwner->cluster(clusterIndex);
+        if (cluster.textRange().start >= range.end) {
+            break;
+        }
+        advance += cluster.isHardBreak() ? 0.0f : cluster.width();
+    }
+    return advance;
 }
 
 // Border gap autoSpacing charged before the cluster containing textIndex. Gaps belong
@@ -2683,6 +2717,14 @@ SkScalar TextLine::iterateThroughSingleRunByStyles(TextAdjustment textAdjustment
         // and keep their legacy clip coverage.
         if (styleType != StyleType::kNone && run->leftToRight()) {
             clipContext.clip.fLeft += this->materializedBorderGapBefore(runStyleTextRange.start);
+            // Trailing ghost spaces never widen a border box: like the left edge above,
+            // the box hugs the last visible cluster and the line break materializes its
+            // right gap there (trailingBorderGap). Only a border box trims the spaces -
+            // a plain background fill keeps its ghost-space coverage.
+            if (styleType == StyleType::kBackground && prevStyle->getBackgroundRect().borderWidth > 0 &&
+                prevStyle->getBackgroundRect().borderColor != 0) {
+                clipContext.clip.fRight -= this->trailingGhostAdvanceInRange(runStyleTextRange);
+            }
         }
 #endif
         if (clipContext.clip.height() == 0) {
