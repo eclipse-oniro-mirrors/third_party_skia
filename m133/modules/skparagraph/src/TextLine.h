@@ -45,6 +45,17 @@ struct IterateRunsContext {
     TextRange lineIntersection;
     EllipsisModal ellipsisMode{EllipsisModal::TAIL};
 };
+
+struct TailEllipsisContext {
+    SkScalar maxWidth{0};
+    WordBreakType wordBreakType{WordBreakType::NORMAL};
+    SkScalar width{0};
+    std::unique_ptr<Run> ellipsisRun;
+    RunIndex lastRun{EMPTY_RUN};
+    int wordCount{0};
+    bool inWord{false};
+    bool iterForWord{false};
+};
 #endif
 class TextLine {
 public:
@@ -217,6 +228,7 @@ public:
     void format(TextAlign align, SkScalar maxWidth, EllipsisModal ellipsisModal);
     SkScalar trailingBorderGap() const;
     SkScalar materializedBorderGapBefore(TextIndex textIndex) const;
+    SkScalar materializedClusterGapBefore(size_t clusterIndex) const;
     SkScalar borderGapAfterRange(TextRange range, TextIndex queryEnd) const;
     SkScalar trailingGhostAdvanceInRange(TextRange range) const;
     SkScalar autoSpacing();
@@ -251,6 +263,10 @@ public:
     void tailEllipsisUpdateEllipsis(Cluster& cluster, std::unique_ptr<Run>& ellipsisRun, const SkString& ellipsis,
         SkScalar width);
     void tailEllipsisUpdateLine(Cluster& cluster, SkScalar width, size_t clusterIndex);
+    void tailEllipsisShapeRun(Cluster& cluster, Cluster& ellipsisStyleCluster, TailEllipsisContext& ctx,
+        const SkString& ellipsis);
+    void tailEllipsisUpdateWordState(Cluster& cluster, TailEllipsisContext& ctx);
+    bool adjustTailEllipsisWidth(Cluster& cluster, size_t clusterIndex, TailEllipsisContext& ctx);
     void createHeadEllipsis(SkScalar maxWidth, const SkString& ellipsis, EllipsisModal ellipsisMode);
     void headEllipsisUpdateLine(std::unique_ptr<Run>& ellipsisRun, SkScalar width, ClusterIndex clusterIndex,
         EllipsisModal ellipsisMode);

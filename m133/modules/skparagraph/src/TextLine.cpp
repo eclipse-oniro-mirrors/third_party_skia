@@ -845,6 +845,19 @@ SkScalar TextLine::materializedBorderGapBefore(TextIndex textIndex) const {
     return fOwner->cluster(clusterIndex).borderGapBefore(prev);
 }
 
+// Gap materialized (by autoSpacing) at the given cluster index of the original line, i.e. the
+// part not already carried by usingAutoSpaceWidth: with auto spacing enabled that correction
+// contains the border gap too (spacingCluster writes both into fAutoSpacings), so adding it
+// here would subtract the same gap twice.
+SkScalar TextLine::materializedClusterGapBefore(size_t clusterIndex) const {
+    if (fOwner->isAutoSpaceEnabled()) {
+        return 0.0f;
+    }
+    const Cluster& c = fOwner->cluster(clusterIndex);
+    const Cluster* prev = (clusterIndex > fClusterRange.start) ? &fOwner->cluster(clusterIndex - 1) : nullptr;
+    return c.borderGapBefore(prev);
+}
+
 // Border gap that follows the range's end on this line: the box's right border width
 // when the range ends at the box's right edge. The exit gap is charged to the cluster
 // after the range (fAutoSpacings) or to the line advance (trailingBorderGap), so width
@@ -1578,85 +1591,37 @@ void TextLine::createTailEllipsis(SkScalar maxWidth, const SkString& ellipsis, b
     // Replace some clusters with the ellipsis
     // Go through the clusters in the reverse logical order
     // taking off cluster by cluster until the ellipsis fits
-    SkScalar width = fAdvance.fX;
+    TailEllipsisContext ctx;
+    ctx.maxWidth = maxWidth;
+    ctx.wordBreakType = wordBreakType;
+    ctx.width = fAdvance.fX;
     const SkScalar oldTrailingGap = trailingBorderGap();
-    // Gap materialized (by autoSpacing) at cluster index i of the original line, i.e. the part
-    // not already carried by usingAutoSpaceWidth: with auto spacing enabled that correction
-    // contains the border gap too (spacingCluster writes both into fAutoSpacings), so adding
-    // it here would subtract the same gap twice.
-    auto materializedGapAt = [this](size_t i) -> SkScalar {
-        if (fOwner->isAutoSpaceEnabled()) {
-            return 0.0f;
-        }
-        const Cluster& c = fOwner->cluster(i);
-        const Cluster* prev = (i > fClusterRange.start) ? &fOwner->cluster(i - 1) : nullptr;
-        return c.borderGapBefore(prev);
-    };
-    RunIndex lastRun = EMPTY_RUN;
-    std::unique_ptr<Run> ellipsisRun;
-    int wordCount = 0;
-    bool inWord = false;
 
-    countWord(wordCount, inWord);
+    countWord(ctx.wordCount, ctx.inWord);
 
     if (fClusterRange.width() == 0 && fGhostClusterRange.width() > 0) {
         // Only be entered when line is empty.
-        handleTailEllipsisInEmptyLine(ellipsisRun, ellipsis, width);
+        handleTailEllipsisInEmptyLine(ctx.ellipsisRun, ellipsis, ctx.width);
         return;
     }
 
-    bool iterForWord = false;
     for (auto clusterIndex = fClusterRange.end; clusterIndex > fClusterRange.start; --clusterIndex) {
         Cluster& cluster = fOwner->cluster(clusterIndex - 1);
         // The style of the ellipsis follows that of the first omitted cluster.
         Cluster& ellipsisStyleCluster = fOwner->cluster(clusterIndex);
-        // Shape the ellipsis if the run has changed
-        if (lastRun != ellipsisStyleCluster.runIndex()) {
-            ellipsisRun = this->shapeEllipsis(ellipsis, &ellipsisStyleCluster);
-            // We may need to continue
-            lastRun = ellipsisStyleCluster.runIndex();
-        }
-
-        // fall back: if ellipsisRun is nullptr, it indecates that fClusterRange end has already gone out of bounds,
-        // rather than the first cluster being omitted.
-        if (ellipsisRun == nullptr && lastRun != cluster.runIndex()) {
-            ellipsisRun = this->shapeEllipsis(ellipsis, &cluster);
-            lastRun = cluster.runIndex();
-        }
-
-        if (!cluster.isWordBreak()) {
-            inWord = true;
-        } else if (inWord) {
-            --wordCount;
-            inWord = false;
-        }
-        // See if it fits
-        if (ellipsisRun != nullptr && width + ellipsisRun->advance().fX > maxWidth) {
-            if (!cluster.isHardBreak()) {
-                width -= usingAutoSpaceWidth(&cluster) + materializedGapAt(clusterIndex - 1);
-            }
-            // Continue if the ellipsis does not fit
-            iterForWord = (wordCount != 1 && wordBreakType != WordBreakType::BREAK_ALL &&
-                           !cluster.isWordBreak());
-            if (std::floor(width) > 0) {
-                continue;
-            }
-        }
-
-        if (iterForWord && !cluster.isWordBreak()) {
-            width -= usingAutoSpaceWidth(&cluster) + materializedGapAt(clusterIndex - 1);
-            if (std::floor(width) > 0) {
-                continue;
-            }
+        tailEllipsisShapeRun(cluster, ellipsisStyleCluster, ctx, ellipsis);
+        tailEllipsisUpdateWordState(cluster, ctx);
+        if (adjustTailEllipsisWidth(cluster, clusterIndex, ctx)) {
+            continue;
         }
 
         // Swap the old trailing gap for the new line end's own trailing gap: the removed
         // clusters took theirs off, the surviving last cluster still needs room for its box.
-        width = width - oldTrailingGap + (cluster.hasBorder() ? cluster.borderWidth() : 0.0f);
+        ctx.width = ctx.width - oldTrailingGap + (cluster.hasBorder() ? cluster.borderWidth() : 0.0f);
 
         // Update the ellipsis attributes and line attributes.
-        tailEllipsisUpdateEllipsis(cluster, ellipsisRun, ellipsis, width);
-        tailEllipsisUpdateLine(cluster, width, clusterIndex);
+        tailEllipsisUpdateEllipsis(cluster, ctx.ellipsisRun, ellipsis, ctx.width);
+        tailEllipsisUpdateLine(cluster, ctx.width, clusterIndex);
         // Update the ellipsis info for the paragraph that has been split runs.
         if (fEllipsis && fOwner->getParagraphStyle().getVerticalAlignment() != TextVerticalAlign::BASELINE) {
             fOwner->setEllipsisRunIndexOffset(cluster.runIndex() - fEllipsisIndex);
@@ -1665,7 +1630,7 @@ void TextLine::createTailEllipsis(SkScalar maxWidth, const SkString& ellipsis, b
         break;
     }
 
-    fWidthWithSpaces = width;
+    fWidthWithSpaces = ctx.width;
 
     ellipsisNotFitProcess(EllipsisModal::TAIL);
 }
@@ -1719,6 +1684,59 @@ void TextLine::tailEllipsisUpdateLine(Cluster& cluster, SkScalar width, size_t c
     if (SkScalarNearlyZero(width)) {
         fRunsInVisualOrder.clear();
     }
+}
+
+void TextLine::tailEllipsisShapeRun(Cluster& cluster, Cluster& ellipsisStyleCluster,
+    TailEllipsisContext& ctx, const SkString& ellipsis)
+{
+    // Shape the ellipsis if the run has changed
+    if (ctx.lastRun != ellipsisStyleCluster.runIndex()) {
+        ctx.ellipsisRun = this->shapeEllipsis(ellipsis, &ellipsisStyleCluster);
+        // We may need to continue
+        ctx.lastRun = ellipsisStyleCluster.runIndex();
+    }
+
+    // fall back: if ellipsisRun is nullptr, it indecates that fClusterRange end has already gone out of bounds,
+    // rather than the first cluster being omitted.
+    if (ctx.ellipsisRun == nullptr && ctx.lastRun != cluster.runIndex()) {
+        ctx.ellipsisRun = this->shapeEllipsis(ellipsis, &cluster);
+        ctx.lastRun = cluster.runIndex();
+    }
+}
+
+void TextLine::tailEllipsisUpdateWordState(Cluster& cluster, TailEllipsisContext& ctx)
+{
+    if (!cluster.isWordBreak()) {
+        ctx.inWord = true;
+    } else if (ctx.inWord) {
+        --ctx.wordCount;
+        ctx.inWord = false;
+    }
+}
+
+// Adjust width when the ellipsis does not fit, returns true to continue to next cluster.
+bool TextLine::adjustTailEllipsisWidth(Cluster& cluster, size_t clusterIndex, TailEllipsisContext& ctx)
+{
+    // See if it fits
+    if (ctx.ellipsisRun != nullptr && ctx.width + ctx.ellipsisRun->advance().fX > ctx.maxWidth) {
+        if (!cluster.isHardBreak()) {
+            ctx.width -= usingAutoSpaceWidth(&cluster) + materializedClusterGapBefore(clusterIndex - 1);
+        }
+        // Continue if the ellipsis does not fit
+        ctx.iterForWord = (ctx.wordCount != 1 && ctx.wordBreakType != WordBreakType::BREAK_ALL &&
+                           !cluster.isWordBreak());
+        if (std::floor(ctx.width) > 0) {
+            return true;
+        }
+    }
+
+    if (ctx.iterForWord && !cluster.isWordBreak()) {
+        ctx.width -= usingAutoSpaceWidth(&cluster) + materializedClusterGapBefore(clusterIndex - 1);
+        if (std::floor(ctx.width) > 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool TextLine::adjustHeadEllipsisWidth(Cluster& cluster, SkScalar& width, ClusterIndex clusterIndex,
