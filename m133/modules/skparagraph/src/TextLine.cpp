@@ -426,7 +426,7 @@ void TextLine::paint(ParagraphPainter* painter, SkScalar x, SkScalar y) {
 
 #ifdef ENABLE_TEXT_ENHANCE
 bool TextLine::hasBackgroundRect(const RoundRectAttr& attr) const {
-    bool hasBorder = attr.roundRectStyle.borderWidth > 0 && attr.roundRectStyle.borderColor != 0;
+    bool hasBorder = attr.roundRectStyle.borderWidth > 0;
     return (attr.roundRectStyle.color != 0 || hasBorder) && attr.rect.width() > 0;
 }
 
@@ -1163,7 +1163,7 @@ int TextLine::paintRoundRectGroup(int startIndex,
                                   SkScalar y) const {
     const RoundRectAttr& startAttr = fRoundRectAttrs[startIndex];
     const RectStyle& rectStyle = startAttr.roundRectStyle;
-    bool hasBorder = rectStyle.borderWidth > 0 && rectStyle.borderColor != 0;
+    bool hasBorder = rectStyle.borderWidth > 0;
 
     // Horizontal span of the box: the union of the group clips, but the group only extends
     // beyond the first attr when a border is set (no border keeps one rect per run). The
@@ -2769,8 +2769,7 @@ SkScalar TextLine::iterateThroughSingleRunByStyles(TextAdjustment textAdjustment
             // the box hugs the last visible cluster and the line break materializes its
             // right gap there (trailingBorderGap). Only a border box trims the spaces -
             // a plain background fill keeps its ghost-space coverage.
-            if (styleType == StyleType::kBackground && prevStyle->getBackgroundRect().borderWidth > 0 &&
-                prevStyle->getBackgroundRect().borderColor != 0) {
+            if (styleType == StyleType::kBackground && prevStyle->getBackgroundRect().borderWidth > 0) {
                 clipContext.clip.fRight -= this->trailingGhostAdvanceInRange(runStyleTextRange);
             }
         }

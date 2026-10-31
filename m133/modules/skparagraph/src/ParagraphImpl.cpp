@@ -1773,7 +1773,7 @@ void ParagraphImpl::markClusterBorder(Cluster& cluster, Run& run, BorderMarkStat
     }
     const TextStyle& style = fTextStyles[state.blockIndex].fStyle;
     const RectStyle& rect = style.getBackgroundRect();
-    const bool hasBorder = rect.borderWidth > 0 && rect.borderColor != 0;
+    const bool hasBorder = rect.borderWidth > 0;
     if (hasBorder) {
         fHasBorderClusters = true;
         const bool sameGroup =
