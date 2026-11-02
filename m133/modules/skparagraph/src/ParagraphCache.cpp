@@ -272,7 +272,7 @@ void ParagraphCacheKey::computeHashTextStyles(uint32_t& hash) const
         hash = mix(hash, SkGoodHash()(relax(ts.fStyle.getMinLineHeight())));
         hash = mix(hash, SkGoodHash()(ts.fStyle.getLineHeightStyle()));
         hash = mix(hash, SkGoodHash()(ts.fStyle.getFontEdging()));
-        hash = mix(hash, SkGoodHash()(ts.fStyle.isFakeBoldEnabled()));
+        hash = mix(hash, SkGoodHash()(relax(ts.fStyle.getBackgroundRect().borderWidth)));
     }
 }
 #else
