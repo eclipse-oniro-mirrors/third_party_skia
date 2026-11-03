@@ -196,6 +196,15 @@ void TextWrapper::accumulateAutoSpacing(LookAheadContext& ctx, Cluster* cluster)
         (cluster - 1)->getFontSize() / AUTO_SPACING_WIDTH_RATIO : 0;
 }
 
+// Border-box gaps enter the breaking arithmetic the same way as fake auto spacing:
+// they are charged when the gap's owner cluster joins the current stretch, so overflow
+// tests at lookAhead see them. Trailing gaps are NOT charged here (materialized at
+// line assembly, matching the auto-spacing precedent).
+void TextWrapper::accumulateBorderSpacing(LookAheadContext& ctx, Cluster* cluster) {
+    Cluster* prev = (cluster == fEndLine.endCluster()) ? nullptr : cluster - 1;
+    ctx.totalFakeSpacing += cluster->borderGapBefore(prev);
+}
+
 // Returns true if the too-long-word situation was resolved (caller should skip checkTooLongCluster).
 bool TextWrapper::detectTooLongWord(Cluster* cluster, LookAheadContext& ctx) {
     // Walk further to see if there is a too long word, cluster or glyph
@@ -224,6 +233,13 @@ bool TextWrapper::detectTooLongWord(Cluster* cluster, LookAheadContext& ctx) {
         }
     }
 
+    // The measured word may have to start a line, where the breaking arithmetic always
+    // charges the border-box enter gap (nullptr rule of borderGapBefore); count it into
+    // the intrinsic width the same way. The overflow decision itself is not affected.
+    // When the word stretch was just committed and cleaned, the word starts at the
+    // overflowing cluster itself.
+    Cluster* wordStart = (fClusters.startCluster() != nullptr) ? fClusters.startCluster() : cluster;
+    SkScalar borderGap = wordStart->borderGapBefore(nullptr);
     if (nextWordLength > ctx.maxWidth) {
         if (ctx.nextNonBreakingSpace != nullptr) {
             // We only get here if the non-breaking space improves our situation
@@ -233,7 +249,7 @@ bool TextWrapper::detectTooLongWord(Cluster* cluster, LookAheadContext& ctx) {
                 // We can add the short word to the existing line
                 fClusters = TextStretch(fClusters.startCluster(), ctx.nextNonBreakingSpace,
                                         fClusters.metrics().getForceStrut());
-                fMinIntrinsicWidth = std::max(fMinIntrinsicWidth, nextShortWordLength);
+                fMinIntrinsicWidth = std::max(fMinIntrinsicWidth, nextShortWordLength + borderGap);
                 fWords.extend(fClusters);
             } else {
                 // We can place the short word on the next line
@@ -243,7 +259,7 @@ bool TextWrapper::detectTooLongWord(Cluster* cluster, LookAheadContext& ctx) {
             return true;
         }
         // If the word is too long we can break it right now and hope it's enough
-        fMinIntrinsicWidth = std::max(fMinIntrinsicWidth, nextWordLength);
+        fMinIntrinsicWidth = std::max(fMinIntrinsicWidth, nextWordLength + borderGap);
         if (fClusters.endPos() - fClusters.startPos() > 1 || fWords.empty()) {
             fTooLongWord = true;
         } else {
@@ -602,6 +618,7 @@ void TextWrapper::lookAhead(SkScalar maxWidth, Cluster* endOfClusters, bool appl
     for (auto cluster = fEndLine.endCluster(); cluster < endOfClusters; ++cluster) {
         handleHeadPunctuation(cluster);
         accumulateAutoSpacing(ctx, cluster);
+        accumulateBorderSpacing(ctx, cluster);
         SkScalar widthBeforeCluster = fWords.width() + fClusters.width() + ctx.totalFakeSpacing;
 
         if (cluster->isHardBreak()) {
@@ -698,7 +715,10 @@ SkScalar TextWrapper::getClustersTrimmedWidth() {
         }
         width += cluster->width();
     }
-    return width;
+    // Min-intrinsic only measures stretches that may start a line, where the breaking
+    // arithmetic always charges the border-box enter gap (the nullptr rule of
+    // borderGapBefore, same as accumulateBorderSpacing), so reserve the gap here too.
+    return width + fClusters.startCluster()->borderGapBefore(nullptr);
 }
 
 // Trim the beginning spaces in case of soft line break
@@ -1064,6 +1084,10 @@ void TextWrapper::generateWordStretches(WordBreakType wordBreakType) {
         totalFakeSpacing += (cluster->needAutoSpacing() && cluster != start)
                                     ? (cluster - 1)->getFontSize() / AUTO_SPACING_WIDTH_RATIO
                                     : 0;
+        // Border-box enter gaps follow the same fake-spacing pattern as auto spacing
+        // (line/walk start passes nullptr, otherwise the in-line predecessor).
+        Cluster* prev = (cluster != start) ? cluster - 1 : nullptr;
+        totalFakeSpacing += cluster->borderGapBefore(prev);
         if (cluster->run().isPlaceholder()) {
             if (!fClusters.empty()) {
                 // Placeholder ends the previous word (placeholders are ignored in trimming)
@@ -1567,6 +1591,12 @@ void TextWrapper::handlePlaceholder(Cluster* cluster, float& lastWordLength) {
 }
 
 void TextWrapper::handleRegularCluster(Cluster* cluster, float& lastWordLength) {
+    if (lastWordLength == 0) {
+        // A word that may have to start a line carries the border-box enter gap
+        // (nullptr rule of borderGapBefore, same as the line-start charge); count it
+        // into the intrinsic width so the remaining walk does not underreport it.
+        lastWordLength += cluster->borderGapBefore(nullptr);
+    }
     fSoftLineMaxIntrinsicWidth += cluster->width();
     lastWordLength += cluster->width();
 }

@@ -112,7 +112,8 @@ public:
         , fTrailingSpaces(paragraph->fTrailingSpaces)
 #ifdef ENABLE_TEXT_ENHANCE
         , fLayoutRawWidth(paragraph->fLayoutRawWidth)
-        , fLayoutConstraintsHeight(paragraph->fConstraintsHeight) {}
+        , fLayoutConstraintsHeight(paragraph->fConstraintsHeight)
+        , fHasBorderClusters(paragraph->fHasBorderClusters) {}
 #else
         { }
 #endif
@@ -151,6 +152,7 @@ public:
     SkScalar fFirstLineIndent{-1.0f};
     SkScalar fLayoutRawWidth;
     SkScalar fLayoutConstraintsHeight;
+    bool fHasBorderClusters;
     size_t maxlines;
     EllipsisModal ellipsisModal;
     std::u16string ellipsisUtf16;
@@ -270,7 +272,7 @@ void ParagraphCacheKey::computeHashTextStyles(uint32_t& hash) const
         hash = mix(hash, SkGoodHash()(relax(ts.fStyle.getMinLineHeight())));
         hash = mix(hash, SkGoodHash()(ts.fStyle.getLineHeightStyle()));
         hash = mix(hash, SkGoodHash()(ts.fStyle.getFontEdging()));
-        hash = mix(hash, SkGoodHash()(ts.fStyle.isFakeBoldEnabled()));
+        hash = mix(hash, SkGoodHash()(relax(ts.fStyle.getBackgroundRect().borderWidth)));
     }
 }
 #else
@@ -458,6 +460,7 @@ void ParagraphCache::updateTo(ParagraphImpl* paragraph, const Entry* entry) {
     }
 #ifdef ENABLE_TEXT_ENHANCE
     paragraph->hash() = entry->fValue->fKey.hash();
+    paragraph->fHasBorderClusters = entry->fValue->fHasBorderClusters;
 #endif
 }
 

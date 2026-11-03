@@ -414,6 +414,7 @@ Run::Run(const Run& run, size_t runIndex)
       fTopInGroup(run.fTopInGroup),
       fBottomInGroup(run.fBottomInGroup),
       fMaxRoundRectRadius(run.fMaxRoundRectRadius),
+      fBorderWidth(run.fBorderWidth),
       indexInLine(run.indexInLine),
       fCompressionBaselineShift(run.fCompressionBaselineShift),
       fVerticalAlignShift(run.fVerticalAlignShift),
@@ -1102,6 +1103,25 @@ bool Cluster::isStartCombineBreak() const {
 
 bool Cluster::isEndCombineBreak() const {
     return fOwner->codeUnitHasProperty(fTextRange.end, SkUnicode::CodeUnitFlags::kCombine);
+}
+
+// Horizontal gap that must precede this cluster inside a line: the cluster's border
+// width when the cluster enters a border box (no in-line predecessor, or the previous
+// cluster is outside the box group), and the previous cluster's border width when this
+// is the first non-border cluster after a box.
+SkScalar Cluster::borderGapBefore(const Cluster* prev) const {
+    if (prev == nullptr) {
+        return hasBorder() ? fBorderWidth : 0.0f;
+    }
+    if (hasBorder() && (!prev->hasBorder() || prev->fBorderSegmentId != fBorderSegmentId)) {
+        // Entering a new box; when the previous cluster ends a different box, the boundary
+        // carries both the old box's exit w and the new box's entry w.
+        return prev->hasBorder() ? prev->fBorderWidth + fBorderWidth : fBorderWidth;
+    }
+    if (!hasBorder() && prev->hasBorder()) {
+        return prev->fBorderWidth;
+    }
+    return 0.0f;
 }
 #endif
 }  // namespace textlayout

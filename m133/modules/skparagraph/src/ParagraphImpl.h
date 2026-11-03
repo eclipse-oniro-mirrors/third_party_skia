@@ -360,9 +360,12 @@ public:
     const SkString& getText() const { return fText; }
 #ifdef ENABLE_TEXT_ENHANCE
     bool hasTabCharacter() const { return fHasTabCharacter; }
+    bool hasBorderClusters() const { return fHasBorderClusters; }
 #endif
-    void includeFontPadding(
-        bool isFirstLine, bool isLastLine, InternalLineMetrics& metrics, const TextRange& textRange);
+    void includeFontPadding(bool isFirstLine,
+                            bool isLastLine,
+                            InternalLineMetrics& metrics,
+                            const TextRange& textRange);
     void updateSplitRunClusterInfo(const Run& run, bool isSplitRun);
     void refreshLines();
     bool isTailOfLineNeedSplit(const Run& lineLastRun, size_t lineEnd, bool hasGenerated);
@@ -477,6 +480,19 @@ public:
 #endif
     void applySpacingAndBuildClusterTable();
     void buildClusterTable();
+#ifdef ENABLE_TEXT_ENHANCE
+    // Carries the border-group state across the cluster-creation loop in buildClusterTable
+    // so every cluster is marked at birth instead of a second pass over the table.
+    struct BorderMarkState {
+        size_t blockIndex{0};
+        int32_t segmentId{0};
+        bool prevHasBorder{false};
+        uint32_t prevStyleId{0};
+        RectStyle prevRect{};
+        bool valid{false}; // false when the block table is empty: skip marking
+    };
+    void markClusterBorder(Cluster& cluster, Run& run, BorderMarkState& state);
+#endif
     bool shapeTextIntoEndlessLine();
     void breakShapedTextIntoLines(SkScalar maxWidth);
 
@@ -661,6 +677,7 @@ private:
     SkString fText;
 #ifdef ENABLE_TEXT_ENHANCE
     bool fHasTabCharacter{false};
+    bool fHasBorderClusters{false};
 #endif
 
     // Internal structures

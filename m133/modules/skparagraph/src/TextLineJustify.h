@@ -79,12 +79,18 @@ private:
         const Cluster* cluster, const Cluster* prevCluster, HighLevelInfo& highLevelInfo);
     ShiftLevel determineShiftLevelForWhitespaceBreak(const Cluster* prevCluster);
     ShiftLevel determineShiftLevelForOtherCases(const Cluster* prevCluster, MiddleLevelInfo& middleLevelInfo);
-    ShiftLevel determineShiftLevel(const Cluster* cluster, const Cluster* prevCluster, HighLevelInfo& highLevelInfo,
-        MiddleLevelInfo& middleLevelInfo, SkScalar& ideographicMaxLen);
-    SkScalar calculateClusterShift(
-        const Cluster* cluster, ClusterIndex index, const ClusterLevelsIndices& clusterLevels);
-    void justifyShiftCluster(const SkScalar maxWidth, SkScalar textLen, SkScalar ideographicMaxLen,
-        size_t prevClusterNotSpaceCount, ClusterLevelsIndices& clusterLevels);
+    ShiftLevel determineShiftLevel(const Cluster* cluster,
+                                   const Cluster* prevCluster,
+                                   HighLevelInfo& highLevelInfo,
+                                   MiddleLevelInfo& middleLevelInfo,
+                                   SkScalar& ideographicMaxLen);
+    SkScalar calculateClusterShift(const Cluster* cluster,
+                                   ClusterIndex index,
+                                   const ClusterLevelsIndices& clusterLevels);
+    void justifyShiftCluster(const SkScalar maxWidth,
+                             SkScalar ideographicMaxLen,
+                             size_t prevClusterNotSpaceCount,
+                             ClusterLevelsIndices& clusterLevels);
 };
 }  // namespace textlayout
 }  // namespace skia

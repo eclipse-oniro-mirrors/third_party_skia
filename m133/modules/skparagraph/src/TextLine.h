@@ -45,6 +45,17 @@ struct IterateRunsContext {
     TextRange lineIntersection;
     EllipsisModal ellipsisMode{EllipsisModal::TAIL};
 };
+
+struct TailEllipsisContext {
+    SkScalar maxWidth{0};
+    WordBreakType wordBreakType{WordBreakType::NORMAL};
+    SkScalar width{0};
+    std::unique_ptr<Run> ellipsisRun;
+    RunIndex lastRun{EMPTY_RUN};
+    int wordCount{0};
+    bool inWord{false};
+    bool iterForWord{false};
+};
 #endif
 class TextLine {
 public:
@@ -215,6 +226,11 @@ public:
 
 #ifdef ENABLE_TEXT_ENHANCE
     void format(TextAlign align, SkScalar maxWidth, EllipsisModal ellipsisModal);
+    SkScalar trailingBorderGap() const;
+    SkScalar materializedBorderGapBefore(TextIndex textIndex) const;
+    SkScalar materializedClusterGapBefore(size_t clusterIndex) const;
+    SkScalar borderGapAfterRange(TextRange range, TextIndex queryEnd) const;
+    SkScalar trailingGhostAdvanceInRange(TextRange range) const;
     SkScalar autoSpacing();
     void resetLineAutoSpacing(size_t resetStart);
     bool isRTLPunctuationHanging(SkScalar delta, SkScalar maxWidth);
@@ -247,6 +263,10 @@ public:
     void tailEllipsisUpdateEllipsis(Cluster& cluster, std::unique_ptr<Run>& ellipsisRun, const SkString& ellipsis,
         SkScalar width);
     void tailEllipsisUpdateLine(Cluster& cluster, SkScalar width, size_t clusterIndex);
+    void tailEllipsisShapeRun(Cluster& cluster, Cluster& ellipsisStyleCluster, TailEllipsisContext& ctx,
+        const SkString& ellipsis);
+    void tailEllipsisUpdateWordState(Cluster& cluster, TailEllipsisContext& ctx);
+    bool adjustTailEllipsisWidth(Cluster& cluster, size_t clusterIndex, TailEllipsisContext& ctx);
     void createHeadEllipsis(SkScalar maxWidth, const SkString& ellipsis, EllipsisModal ellipsisMode);
     void headEllipsisUpdateLine(std::unique_ptr<Run>& ellipsisRun, SkScalar width, ClusterIndex clusterIndex,
         EllipsisModal ellipsisMode);
@@ -386,6 +406,11 @@ private:
                                   bool hasBorder,
                                   SkScalar left,
                                   SkScalar right) const;
+    SkRRect computeTextTightRoundRect(const RoundRectAttr& startAttr,
+                                      SkScalar left,
+                                      SkScalar right,
+                                      SkScalar top,
+                                      SkScalar bottom) const;
     void spacingCluster(const Cluster* cluster, SkScalar spacing, SkScalar prevSpacing);
     bool hasBackgroundRect(const RoundRectAttr& attr) const;
     void computeRoundRect(int& index, int& preIndex, std::vector<Run*>& groupRuns, Run* run);

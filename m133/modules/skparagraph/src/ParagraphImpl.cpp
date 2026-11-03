@@ -1692,6 +1692,12 @@ void ParagraphImpl::buildClusterTable()
     }
     fClusters.reserve_exact(fClusters.size() + cluster_count);
 
+#ifdef ENABLE_TEXT_ENHANCE
+    BorderMarkState borderMarkState;
+    borderMarkState.valid = !fTextStyles.empty();
+    fHasBorderClusters = false;
+#endif
+
     // Walk through all the run in the direction of input text
     for (auto& run : fRuns) {
         auto runIndex = run.index();
@@ -1703,17 +1709,21 @@ void ParagraphImpl::buildClusterTable()
             }
             // There are no glyphs but we want to have one cluster
             fClusters.emplace_back(this, runIndex, 0ul, 1ul, this->text(run.textRange()), run.advance().fX, run.advance().fY);
+#ifdef ENABLE_TEXT_ENHANCE
+            markClusterBorder(fClusters.back(), run, borderMarkState);
+#endif
             fCodeUnitProperties[run.textRange().start] |= SkUnicode::CodeUnitFlags::kSoftLineBreakBefore;
             fCodeUnitProperties[run.textRange().end] |= SkUnicode::CodeUnitFlags::kSoftLineBreakBefore;
         } else {
             // Walk through the glyph in the direction of input text
 #ifdef ENABLE_TEXT_ENHANCE
-            run.iterateThroughClustersInTextOrder([&run, runIndex, this](size_t glyphStart,
-                                                                   size_t glyphEnd,
-                                                                   size_t charStart,
-                                                                   size_t charEnd,
-                                                                   SkScalar width,
-                                                                   SkScalar height) {
+            run.iterateThroughClustersInTextOrder(
+                [&run, &borderMarkState, runIndex, this](size_t glyphStart,
+                                                         size_t glyphEnd,
+                                                         size_t charStart,
+                                                         size_t charEnd,
+                                                         SkScalar width,
+                                                         SkScalar height) {
 #else
             run.iterateThroughClustersInTextOrder([runIndex, this](size_t glyphStart,
                                                                    size_t glyphEnd,
@@ -1729,6 +1739,9 @@ void ParagraphImpl::buildClusterTable()
                 }
                 SkSpan<const char> text(fText.c_str() + charStart, charEnd - charStart);
                 fClusters.emplace_back(this, runIndex, glyphStart, glyphEnd, text, width, height);
+#ifdef ENABLE_TEXT_ENHANCE
+                markClusterBorder(fClusters.back(), run, borderMarkState);
+#endif
                 fCodeUnitProperties[charStart] |= SkUnicode::CodeUnitFlags::kGlyphClusterStart;
             });
         }
@@ -1740,6 +1753,43 @@ void ParagraphImpl::buildClusterTable()
     fClustersIndexFromCodeUnit[fText.size()] = fClusters.size();
     fClusters.emplace_back(this, EMPTY_RUN, 0, 0, this->text({fText.size(), fText.size()}), 0, 0);
 }
+
+#ifdef ENABLE_TEXT_ENHANCE
+// Marks a freshly created cluster with the effective border width of its block's RectStyle
+// and a border-box segment id: a maximal run of adjacent clusters in one styleId + RectStyle
+// group, matching TextLine::paintRoundRectGroup merging. A cluster covered by several blocks
+// follows the block at its start (initLimitHeightParam precedent). Also raises the owning
+// run's border width to the maximum of its clusters for line-height reservation. Called at
+// cluster creation inside buildClusterTable so border state is settled at birth and no
+// second pass over the cluster table is needed. The trailing sentinel cluster is created
+// after the creation loop and therefore stays unmarked.
+void ParagraphImpl::markClusterBorder(Cluster& cluster, Run& run, BorderMarkState& state) {
+    if (!state.valid) {
+        return;
+    }
+    while (state.blockIndex + 1 < fTextStyles.size() &&
+           fTextStyles[state.blockIndex + 1].fRange.start <= cluster.textRange().start) {
+        ++state.blockIndex;
+    }
+    const TextStyle& style = fTextStyles[state.blockIndex].fStyle;
+    const RectStyle& rect = style.getBackgroundRect();
+    const bool hasBorder = rect.borderWidth > 0;
+    if (hasBorder) {
+        fHasBorderClusters = true;
+        const bool sameGroup =
+                state.prevHasBorder && style.getStyleId() == state.prevStyleId && rect == state.prevRect;
+        if (!sameGroup) {
+            ++state.segmentId;
+        }
+        cluster.setBorderWidth(rect.borderWidth);
+        cluster.setBorderSegmentId(state.segmentId);
+        run.setBorderWidth(std::fmax(run.borderWidth(), rect.borderWidth));
+    }
+    state.prevHasBorder = hasBorder;
+    state.prevStyleId = style.getStyleId();
+    state.prevRect = rect;
+}
+#endif
 
 bool ParagraphImpl::shapeTextIntoEndlessLine() {
 #ifdef ENABLE_TEXT_ENHANCE
@@ -3368,6 +3418,7 @@ std::unique_ptr<Paragraph> ParagraphImpl::CloneSelf()
     paragraph->fText = this->fText;
 #ifdef ENABLE_TEXT_ENHANCE
     paragraph->fHasTabCharacter = this->fHasTabCharacter;
+    paragraph->fHasBorderClusters = this->fHasBorderClusters;
 #endif
 
     paragraph->fState = this->fState;

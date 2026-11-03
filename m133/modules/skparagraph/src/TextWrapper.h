@@ -355,6 +355,7 @@ private:
     void initLookAheadState();
     void handleHeadPunctuation(Cluster* cluster);
     void accumulateAutoSpacing(LookAheadContext& ctx, Cluster* cluster);
+    void accumulateBorderSpacing(LookAheadContext& ctx, Cluster* cluster);
     // Overflow: returns LoopAction::CONTINUE to continue loop, LoopAction::BREAK to exit
     LoopAction handleOverflowCluster(Cluster* cluster, LookAheadContext& ctx,
                                        SkScalar widthBeforeCluster, TextTabAlign& textTabAlign);
