@@ -186,6 +186,7 @@ enum class FastPathCharClass : uint8_t {
     kUnsupported,       // requires complex shaping (harfbuzz)
     kCustom,            // user-specified font family, highest priority
     kSimplifiedChinese, // simplified chinese and general text -> HarmonyOS Sans SC
+    kASCIIDigits,       // ASCII digits -> HarmonyOS Sans
     kEmoji,             // emoji -> HMOS Color Emoji
 };
 

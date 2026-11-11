@@ -198,9 +198,11 @@ private:
     // per-segment FamilyKey construction (vector<SkString> copy + hash) and
     // shared_lock inside FontCollection::findTypefaces.
     struct FastPathTypefaces {
+        std::shared_ptr<RSTypeface> fSimplifiedChineseSC;
         std::shared_ptr<RSTypeface> fSimplifiedChinese;
         std::shared_ptr<RSTypeface> fEmoji;
         std::shared_ptr<RSTypeface> fCustom;
+        ScaleParam fSimplifiedChineseSCScale;
         ScaleParam fSimplifiedChineseScale;
         ScaleParam fEmojiScale;
         ScaleParam fCustomScale;

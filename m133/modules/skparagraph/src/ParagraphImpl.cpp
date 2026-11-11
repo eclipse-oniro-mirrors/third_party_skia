@@ -4108,9 +4108,14 @@ FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
         return FastPathCharClass::kUnsupported;
     }
 
-    // Halfwidth space and ASCII digits, common in Chinese text.
-    if (unicode == 0x20 || (unicode >= 0x30 && unicode <= 0x39)) {
+    // Halfwidth space, common in Chinese text.
+    if (unicode == 0x20) {
         return FastPathCharClass::kSimplifiedChinese;
+    }
+
+    // ASCII digits
+    if (unicode >= 0x30 && unicode <= 0x39) {
+        return FastPathCharClass::kASCIIDigits;
     }
 
     // Any remaining ASCII (Latin letters, halfwidth punctuation) is not in the

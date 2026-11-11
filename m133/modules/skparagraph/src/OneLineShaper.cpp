@@ -1377,6 +1377,7 @@ SkUnichar OneLineShaper::getEmojiSequenceStart(SkUnicode* unicode, const char** 
 
 #ifdef ENABLE_TEXT_ENHANCE
 constexpr const char* kFastPathSCFamily = "HarmonyOS Sans SC";
+constexpr const char* kFastPathFamily = "HarmonyOS Sans";
 constexpr const char* kFastPathEmojiFamily = "HMOS Color Emoji";
 
 // Resolves the fast path typefaces through the font collection, keeping the
@@ -1416,8 +1417,18 @@ void OneLineShaper::resolveFastPathTypeface(const FastPathSegment& segment,
         typeface = cachedTypefaces.fEmoji;
         scaleParam = cachedTypefaces.fEmojiScale;
     } else if (segment.fClass == FastPathCharClass::kSimplifiedChinese) {
+        if (cachedTypefaces.fSimplifiedChineseSC == nullptr) {
+            cachedTypefaces.fSimplifiedChineseSC = this->findFastPathTypeface(kFastPathSCFamily, style);
+            if (cachedTypefaces.fSimplifiedChineseSC != nullptr) {
+                cachedTypefaces.fSimplifiedChineseSCScale =
+                    findCompressionConfigWithFont(cachedTypefaces.fSimplifiedChineseSC);
+            }
+        }
+        typeface = cachedTypefaces.fSimplifiedChineseSC;
+        scaleParam = cachedTypefaces.fSimplifiedChineseSCScale;
+    } else if (segment.fClass == FastPathCharClass::kASCIIDigits) {
         if (cachedTypefaces.fSimplifiedChinese == nullptr) {
-            cachedTypefaces.fSimplifiedChinese = this->findFastPathTypeface(kFastPathSCFamily, style);
+            cachedTypefaces.fSimplifiedChinese = this->findFastPathTypeface(kFastPathFamily, style);
             if (cachedTypefaces.fSimplifiedChinese != nullptr) {
                 cachedTypefaces.fSimplifiedChineseScale =
                     findCompressionConfigWithFont(cachedTypefaces.fSimplifiedChinese);
