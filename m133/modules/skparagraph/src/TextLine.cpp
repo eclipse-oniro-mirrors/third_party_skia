@@ -754,7 +754,12 @@ void TextLine::format(TextAlign align, SkScalar maxWidth) {
 }
 
 #ifdef ENABLE_TEXT_ENHANCE
-SkScalar TextLine::autoSpacing() {
+// Walks the line's ghost clusters accumulating the auto spacing and border gaps
+// for the current cluster range; materializes the per-glyph shifts
+// (Run::fAutoSpacings) when apply is true. The walk only reads cluster
+// properties, so a dry run (apply == false) reproduces the total a previous
+// materialization added to the line metrics for the same range.
+SkScalar TextLine::accumulateAutoSpacing(bool apply) {
     if (!fOwner->isAutoSpaceEnabled() && !fOwner->hasBorderClusters()) {
         return 0;
     }
@@ -773,9 +778,16 @@ SkScalar TextLine::autoSpacing() {
                                       ? &fOwner->cluster(clusterIndex - 1)
                                       : nullptr;
         spacing += cluster.borderGapBefore(prev);
-        spacingCluster(&cluster, spacing, prevSpacing);
+        if (apply) {
+            spacingCluster(&cluster, spacing, prevSpacing);
+        }
     }
     spacing += trailingBorderGap();
+    return spacing;
+}
+
+SkScalar TextLine::autoSpacing() {
+    SkScalar spacing = accumulateAutoSpacing(true);
     this->fWidthWithSpaces += spacing;
     this->fAdvance.fX += spacing;
     return spacing;
@@ -921,6 +933,24 @@ void TextLine::resetLineAutoSpacing(size_t resetStart) {
             }
         }
     }
+}
+
+// Re-derives the line's auto/border spacing after the line's cluster range
+// changed (orphan-char reflow moves clusters across the line break): the
+// per-glyph shifts materialized for the old range are stale - the line-start
+// entry gap now belongs to the new first cluster, and the trailing gap follows
+// the new last visible cluster. Removes the spacing total that the old range's
+// materialization had added to the line metrics (removedSpacing, captured with
+// a dry run before the range changed), clears the stale per-glyph shifts and
+// re-materializes them for the current range.
+void TextLine::rematerializeAutoSpacing(SkScalar removedSpacing) {
+    if (!fOwner->isAutoSpaceEnabled() && !fOwner->hasBorderClusters()) {
+        return;
+    }
+    fWidthWithSpaces -= removedSpacing;
+    fAdvance.fX -= removedSpacing;
+    resetLineAutoSpacing(fGhostClusterRange.start);
+    autoSpacing();
 }
 #endif
 

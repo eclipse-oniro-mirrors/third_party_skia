@@ -676,11 +676,31 @@ void ParagraphImpl::fixOrphanedWords() {
             continue;
         }
 
+        // The reflow below moves clusters across the line break, so the auto/border
+        // spacing materialized into both lines (Run::fAutoSpacings and the gap totals
+        // counted into their advances) goes stale: the line-start entry gap must move
+        // to the reflowed word part. Capture the totals currently materialized for the
+        // old ranges with a dry run to re-materialize both lines afterwards. Ellipsis
+        // lines re-derive their widths in ellipsis processing and are left alone.
+        const bool prevLineHasEllipsis = fLines[lineIndex - 1].ellipsis() != nullptr;
+        SkScalar prevLineSpacing = prevLineHasEllipsis ? 0.0f
+            : fLines[lineIndex - 1].accumulateAutoSpacing(false);
+        SkScalar currLineSpacing = fLines[lineIndex].accumulateAutoSpacing(false);
+
         SkScalar adjustClusterWidth = fLines[lineIndex].reflowFromPreviousLine(firstWordStartOfLine);
         SkScalar preOriLineHeight = fLines[lineIndex - 1].sizes().height();
         fLines[lineIndex - 1].trimLine(firstWordStartOfLine, adjustClusterWidth);
         SkScalar preAfterLineHeight = fLines[lineIndex - 1].sizes().height();
         fLines[lineIndex].shiftOffsetY(preAfterLineHeight - preOriLineHeight);
+
+        // Re-materialize the spacing for the new ranges, previous line first: the
+        // materialization order follows line order so clusters shared by adjacent
+        // ghost ranges keep getting their shifts from the later line, exactly as at
+        // line creation.
+        if (!prevLineHasEllipsis) {
+            fLines[lineIndex - 1].rematerializeAutoSpacing(prevLineSpacing);
+        }
+        fLines[lineIndex].rematerializeAutoSpacing(currLineSpacing);
 
         modified = true;
     }
