@@ -3530,6 +3530,7 @@ PositionWithAffinity TextLine::getGlyphPositionAtCoordinate(SkScalar dx) {
                                          ? 0
                                          : SkScalarFloorToInt(delta / averageGraphemeWidth);
 #ifdef ENABLE_TEXT_ENHANCE
+                    graphemeIndex = std::clamp(graphemeIndex, 0, static_cast<int>(graphemes.size() - 1));
                     auto graphemeCenter = glyphemePosLeft + graphemeIndex * averageGraphemeWidth +
                                           averageGraphemeWidth * fOwner->getTextSplitRatio();
 #else

@@ -2885,6 +2885,11 @@ bool ParagraphImpl::canPaintAllText() const
 TArray<TextIndex> ParagraphImpl::countSurroundingGraphemes(TextRange textRange) const {
     textRange = textRange.intersection({0, fText.size()});
     TArray<TextIndex> graphemes;
+    if (textRange.start >= textRange.end || textRange.start >= fCodeUnitProperties.size()) {
+        TEXT_LOGW("Invalid text range[%{public}zu %{public}zu] code size %{public}d", textRange.start, textRange.end,
+            fCodeUnitProperties.size());
+        return graphemes;
+    }
     if ((fCodeUnitProperties[textRange.start] & SkUnicode::CodeUnitFlags::kGraphemeStart) == 0) {
         // Count the previous partial grapheme
         graphemes.emplace_back(textRange.start);
