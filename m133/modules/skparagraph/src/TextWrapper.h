@@ -435,10 +435,16 @@ private:
     void advanceToNextLine();
     void prepareForNextLine();
     void processRemainingClusters();
-    void handleHardBreak(float& lastWordLength);
+    void handleHardBreak(Cluster* cluster, float& lastWordLength);
     void handleWhitespaceBreak(Cluster* cluster, float& lastWordLength);
     void handlePlaceholder(Cluster* cluster, float& lastWordLength);
     void handleRegularCluster(Cluster* cluster, float& lastWordLength);
+    // Charges the exit border gap of the word ending right before breakCluster into
+    // lastWordLength before its commit into fMinIntrinsicWidth: a line starting with
+    // this word ends there, where a border box materializes its exit width into the
+    // line advance (trailingBorderGap), so the intrinsic width reserves it
+    // symmetrically to the enter gap charged in handleRegularCluster.
+    void chargeWordExitBorderGap(Cluster* breakCluster, float& lastWordLength);
     bool handleHighQualityBreakAllPunctuation(Cluster* cluster,
                                               Cluster* endOfClusters,
                                               SkScalar widthBeforeCluster,
