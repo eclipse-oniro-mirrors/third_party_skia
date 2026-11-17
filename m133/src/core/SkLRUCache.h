@@ -65,37 +65,21 @@ public:
     }
 
     V* insert(const K& key, V value) {
-#ifdef ENABLE_TEXT_ENHANCE
-        if (Entry** existing = fMap.find(key)) {
-            Entry* entry = *existing;
-            entry->fValue = std::move(value);
-            if (entry != fLRU.head()) {
-                fLRU.remove(entry);
-                fLRU.addToHead(entry);
-            }
-            return &entry->fValue;
-        }
-
-        Entry* entry = new Entry(key, std::move(value));
-        fMap.set(entry);
-        fLRU.addToHead(entry);
-        while (fMap.count() > fMaxCount) {
-            if (!this->removeOldest()) {
-                break;
-            }
-        }
-        return &entry->fValue;
-#else
         SkASSERT(!this->find(key));
 
         Entry* entry = new Entry(key, std::move(value));
         fMap.set(entry);
         fLRU.addToHead(entry);
         while (fMap.count() > fMaxCount) {
+#ifdef ENABLE_TEXT_ENHANCE
+            if (!this->removeOldest()) {
+                break;
+            }
+#else
             this->remove(fLRU.tail()->fKey);
+#endif
         }
         return &entry->fValue;
-#endif
     }
 
     V* insert_or_update(const K& key, V value) {
