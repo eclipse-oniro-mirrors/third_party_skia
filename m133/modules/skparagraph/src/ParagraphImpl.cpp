@@ -4089,6 +4089,20 @@ static bool isEmojiCodepoint(SkUnichar unicode) {
     return it != std::end(kEmojiRanges) && unicode >= it->start;
 }
 
+// Opening CJK brackets (〈《「『【〔〖〘〚（［｛｟) excluded from the fast path.
+// HarmonyOS Sans SC maps them to half-width glyphs through the raw cmap lookup,
+// while the full-width forms produced by the standard harfbuzz path come from
+// the GSUB 'calt' feature, which the fast path does not apply.
+constexpr SkUnichar kFastPathExcludedBrackets[] = {
+    0x3008, 0x300A, 0x300C, 0x300E, 0x3010, 0x3014, 0x3016, 0x3018, 0x301A,
+    0xFF08, 0xFF3B, 0xFF5B, 0xFF5F,
+};
+
+static bool isFastPathExcludedBracket(SkUnichar unicode) {
+    return std::binary_search(std::begin(kFastPathExcludedBrackets),
+                              std::end(kFastPathExcludedBrackets), unicode);
+}
+
 FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
     // Hot path: CJK Unified Ideographs — the overwhelming majority of Chinese
     // text. A single range check avoids walking the emoji whitelist first
@@ -4129,6 +4143,12 @@ FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
     // table with binary search instead of a long if/else chain.
     if (isEmojiCodepoint(unicode)) {
         return FastPathCharClass::kEmoji;
+    }
+
+    // Opening brackets must keep the full-width advance of the standard path,
+    // so they fall back to harfbuzz (see kFastPathExcludedBrackets above).
+    if (isFastPathExcludedBracket(unicode)) {
+        return FastPathCharClass::kUnsupported;
     }
 
     // Simplified chinese remainder: CJK Extension A, compat ideographs, CJK
