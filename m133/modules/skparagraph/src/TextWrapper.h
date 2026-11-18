@@ -365,6 +365,10 @@ private:
     LoopAction handleOverflowPlaceholder(Cluster* cluster, LookAheadContext& ctx);
     // Returns true if lookAhead should proceed to fallback, false if hyphen break was found
     bool attemptHyphenation(Cluster* cluster, LookAheadContext& ctx, SkScalar widthBeforeCluster);
+    // Looks ahead for the word boundary; fills the full/short word lengths and the word end
+    void measureTooLongWord(Cluster* cluster, LookAheadContext& ctx,
+                            SkScalar& nextWordLength, SkScalar& nextShortWordLength,
+                            Cluster*& wordEnd);
     bool detectTooLongWord(Cluster* cluster, LookAheadContext& ctx);
     void checkTooLongCluster(Cluster* cluster, LookAheadContext& ctx);
     // Normal (non-overflow) cluster handling

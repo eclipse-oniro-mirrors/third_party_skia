@@ -205,12 +205,16 @@ void TextWrapper::accumulateBorderSpacing(LookAheadContext& ctx, Cluster* cluste
     ctx.totalFakeSpacing += cluster->borderGapBefore(prev);
 }
 
-// Returns true if the too-long-word situation was resolved (caller should skip checkTooLongCluster).
-bool TextWrapper::detectTooLongWord(Cluster* cluster, LookAheadContext& ctx) {
-    // Walk further to see if there is a too long word, cluster or glyph
-    SkScalar nextWordLength = fClusters.width();
-    SkScalar nextShortWordLength = nextWordLength;
-    Cluster* wordEnd = nullptr;
+// Walks further from the cluster to see if there is a too long word, cluster or glyph.
+// Fills in the full word length (nextWordLength), the word length before the last usable
+// intra-word break (nextShortWordLength) and the word's last cluster (wordEnd); the
+// intra-word break cluster itself is recorded in ctx.nextNonBreakingSpace.
+void TextWrapper::measureTooLongWord(Cluster* cluster, LookAheadContext& ctx,
+                                     SkScalar& nextWordLength, SkScalar& nextShortWordLength,
+                                     Cluster*& wordEnd) {
+    nextWordLength = fClusters.width();
+    nextShortWordLength = nextWordLength;
+    wordEnd = nullptr;
     for (auto further = cluster; further != ctx.endOfClusters; ++further) {
         if (further->isSoftBreak() || further->isHardBreak() || further->isWhitespaceBreak()) {
             break;
@@ -234,6 +238,14 @@ bool TextWrapper::detectTooLongWord(Cluster* cluster, LookAheadContext& ctx) {
         }
         wordEnd = further;
     }
+}
+
+// Returns true if the too-long-word situation was resolved (caller should skip checkTooLongCluster).
+bool TextWrapper::detectTooLongWord(Cluster* cluster, LookAheadContext& ctx) {
+    SkScalar nextWordLength = 0.0;
+    SkScalar nextShortWordLength = 0.0;
+    Cluster* wordEnd = nullptr;
+    measureTooLongWord(cluster, ctx, nextWordLength, nextShortWordLength, wordEnd);
 
     // The measured word may have to start a line, where the breaking arithmetic always
     // charges the border-box enter gap (nullptr rule of borderGapBefore); count it into
