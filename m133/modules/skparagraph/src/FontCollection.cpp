@@ -448,7 +448,7 @@ public:
     }
 
     std::shared_ptr<RSTypeface> insert(uint32_t fontId, std::shared_ptr<RSTypeface> hbFont) {
-        auto face = fLRUCache.insert(fontId, std::move(hbFont));
+        auto face = fLRUCache.insert_or_update(fontId, std::move(hbFont));
         return face == nullptr ? nullptr : *face;
     }
 
