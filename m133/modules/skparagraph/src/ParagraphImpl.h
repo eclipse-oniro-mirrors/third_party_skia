@@ -188,6 +188,7 @@ enum class FastPathCharClass : uint8_t {
     kSimplifiedChinese, // simplified chinese and general text -> HarmonyOS Sans SC
     kASCIIDigits,       // ASCII digits -> HarmonyOS Sans
     kEmoji,             // emoji -> HMOS Color Emoji
+    kLineBreak,         // \n, \r: transparent to segmentation, attach to adjacent run
 };
 
 // A maximal text range of characters with the same fast path class.

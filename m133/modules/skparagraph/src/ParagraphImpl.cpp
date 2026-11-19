@@ -4111,11 +4111,11 @@ FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
         return FastPathCharClass::kSimplifiedChinese;
     }
 
-    // Hard line breaks (\n, \r) are zero-width control characters with no glyph
-    // of their own; tag them as simplified chinese so they inherit the adjacent
-    // font and multi-line text does not force a harfbuzz fallback.
+    // Hard line breaks (\n, \r) have no glyph of their own. They are transparent
+    // to segmentation (see collectFastPathSegments) and attach to the adjacent
+    // run, matching harfbuzz's control-codepoint handling.
     if (unicode == 0x0A || unicode == 0x0D) {
-        return FastPathCharClass::kSimplifiedChinese;
+        return FastPathCharClass::kLineBreak;
     }
 
     if (unicode < 0x20) {
@@ -4246,11 +4246,29 @@ bool ParagraphImpl::collectFastPathSegments(SkSpan<Block> blocks,
 
         size_t segmentStart = block.fRange.start;
         FastPathCharClass segmentClass = FastPathCharClass::kUnsupported;
+        // Leading line breaks have no preceding segment to attach to; they must
+        // join the following run (harfbuzz keeps control characters in the
+        // current font run), so remember where such a run starts.
+        bool hasPendingLineBreak = false;
+        size_t pendingLineBreakStart = 0;
 
         while (ptr < end) {
             const char* charStart = ptr;
             SkUnichar unicode = SkUTF::NextUTF8(&ptr, end);
             FastPathCharClass charClass = classifyFastPathChar(unicode);
+
+            // Hard line breaks are transparent to segmentation: they carry no
+            // glyph of their own and, like harfbuzz's control-codepoint handling,
+            // never start a new run. They stay in the current run, or - at the
+            // start of the text - join the next one.
+            if (charClass == FastPathCharClass::kLineBreak) {
+                if (segmentClass == FastPathCharClass::kUnsupported && !hasPendingLineBreak) {
+                    hasPendingLineBreak = true;
+                    pendingLineBreakStart = charStart - text.begin();
+                }
+                continue;
+            }
+
             if (charClass == FastPathCharClass::kUnsupported) {
                 return false;
             }
@@ -4259,7 +4277,10 @@ bool ParagraphImpl::collectFastPathSegments(SkSpan<Block> blocks,
             }
             if (segmentClass == FastPathCharClass::kUnsupported) {
                 segmentClass = charClass;
-                segmentStart = block.fRange.start + (charStart - text.begin());
+                segmentStart = block.fRange.start + (hasPendingLineBreak
+                    ? pendingLineBreakStart
+                    : static_cast<size_t>(charStart - text.begin()));
+                hasPendingLineBreak = false;
             } else if (charClass != segmentClass) {
                 segments.emplace_back(FastPathSegment{
                     TextRange(segmentStart, block.fRange.start + (charStart - text.begin())),
@@ -4267,6 +4288,13 @@ bool ParagraphImpl::collectFastPathSegments(SkSpan<Block> blocks,
                 segmentClass = charClass;
                 segmentStart = block.fRange.start + (charStart - text.begin());
             }
+        }
+
+        if (segmentClass == FastPathCharClass::kUnsupported && hasPendingLineBreak) {
+            // The block consists only of line breaks: shape them with the block's
+            // own font, as harfbuzz would.
+            segmentClass = FastPathCharClass::kCustom;
+            segmentStart = block.fRange.start + pendingLineBreakStart;
         }
 
         if (segmentClass != FastPathCharClass::kUnsupported) {

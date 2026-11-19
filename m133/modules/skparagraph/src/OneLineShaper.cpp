@@ -1529,17 +1529,18 @@ static bool computeFastPathGlyphs(const RSFont& font, const char* textStart, siz
     widths->push_back_n(glyphCount);
     font.GetWidths(glyphs->begin(), glyphCount, widths->begin());
 
-    // Hard line breaks (\n, \r) have no glyph mapping; force glyph 0 + zero
-    // width to match harfbuzz's control-codepoint handling. Any other glyph 0
-    // means the typeface did not resolve the character, so report failure.
+    // Hard line breaks (\n, \r) have no glyph mapping (glyph 0). HarfBuzz shapes
+    // them via skhb_glyph_h_advance and therefore keeps the .notdef advance, so
+    // leave both the glyph and its width untouched to match that path. Any other
+    // glyph 0 means the typeface did not resolve the character.
     const char* ptr = textStart;
     const char* end = textStart + textLen;
     for (size_t i = 0; i < glyphCount; ++i) {
         SkUnichar unicode = SkUTF::NextUTF8(&ptr, end);
         if (unicode == 0x0A || unicode == 0x0D) {
-            (*glyphs)[i] = 0;
-            (*widths)[i] = 0;
-        } else if ((*glyphs)[i] == 0) {
+            continue;
+        }
+        if ((*glyphs)[i] == 0) {
             return false;
         }
     }
