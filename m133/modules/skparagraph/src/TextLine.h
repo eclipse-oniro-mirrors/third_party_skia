@@ -232,6 +232,8 @@ public:
     SkScalar borderGapAfterRange(TextRange range, TextIndex queryEnd) const;
     SkScalar trailingGhostAdvanceInRange(TextRange range) const;
     SkScalar autoSpacing();
+    SkScalar accumulateAutoSpacing(bool apply);
+    void rematerializeAutoSpacing(SkScalar removedSpacing);
     void resetLineAutoSpacing(size_t resetStart);
     bool isRTLPunctuationHanging(SkScalar delta, SkScalar maxWidth);
     bool hasRTLTrailingWhiteSpace() const;

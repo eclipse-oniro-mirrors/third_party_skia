@@ -365,6 +365,10 @@ private:
     LoopAction handleOverflowPlaceholder(Cluster* cluster, LookAheadContext& ctx);
     // Returns true if lookAhead should proceed to fallback, false if hyphen break was found
     bool attemptHyphenation(Cluster* cluster, LookAheadContext& ctx, SkScalar widthBeforeCluster);
+    // Looks ahead for the word boundary; fills the full/short word lengths and the word end
+    void measureTooLongWord(Cluster* cluster, LookAheadContext& ctx,
+                            SkScalar& nextWordLength, SkScalar& nextShortWordLength,
+                            Cluster*& wordEnd);
     bool detectTooLongWord(Cluster* cluster, LookAheadContext& ctx);
     void checkTooLongCluster(Cluster* cluster, LookAheadContext& ctx);
     // Normal (non-overflow) cluster handling
@@ -435,10 +439,16 @@ private:
     void advanceToNextLine();
     void prepareForNextLine();
     void processRemainingClusters();
-    void handleHardBreak(float& lastWordLength);
+    void handleHardBreak(Cluster* cluster, float& lastWordLength);
     void handleWhitespaceBreak(Cluster* cluster, float& lastWordLength);
     void handlePlaceholder(Cluster* cluster, float& lastWordLength);
     void handleRegularCluster(Cluster* cluster, float& lastWordLength);
+    // Charges the exit border gap of the word ending right before breakCluster into
+    // lastWordLength before its commit into fMinIntrinsicWidth: a line starting with
+    // this word ends there, where a border box materializes its exit width into the
+    // line advance (trailingBorderGap), so the intrinsic width reserves it
+    // symmetrically to the enter gap charged in handleRegularCluster.
+    void chargeWordExitBorderGap(Cluster* breakCluster, float& lastWordLength);
     bool handleHighQualityBreakAllPunctuation(Cluster* cluster,
                                               Cluster* endOfClusters,
                                               SkScalar widthBeforeCluster,
