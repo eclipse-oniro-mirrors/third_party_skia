@@ -4298,8 +4298,20 @@ bool ParagraphImpl::collectFastPathSegments(SkSpan<Block> blocks,
         }
 
         if (segmentClass != FastPathCharClass::kUnsupported) {
-            segments.emplace_back(FastPathSegment{
-                TextRange(segmentStart, block.fRange.end), segmentClass, &block});
+            TextRange segmentRange(segmentStart, block.fRange.end);
+            // Mirror OneLineShaper::iterateThroughFontStyles: adjacent blocks whose
+            // shaping attributes match are shaped as a single run, so extend the
+            // previous segment instead of emitting a separate one.
+            if (!segments.empty()) {
+                FastPathSegment& prev = segments.back();
+                if (prev.fClass == segmentClass &&
+                    prev.fRange.end == segmentRange.start &&
+                    prev.fBlock->fStyle.matchOneAttribute(StyleType::kFont, block.fStyle)) {
+                    prev.fRange.end = segmentRange.end;
+                    continue;
+                }
+            }
+            segments.emplace_back(FastPathSegment{segmentRange, segmentClass, &block});
         }
     }
     return true;
