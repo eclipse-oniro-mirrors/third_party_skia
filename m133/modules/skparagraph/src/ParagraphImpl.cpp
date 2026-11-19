@@ -1761,6 +1761,7 @@ bool ParagraphImpl::shapeTextIntoEndlessLine() {
                 if (fastPathSuccess && oneLineShaper.unresolvedGlyphs() == 0) {
                     fUnresolvedGlyphs = oneLineShaper.unresolvedGlyphs();
                     this->applySpacingAndBuildClusterTable();
+                    TEXT_LOGD("Use quick shape.");
                     return true;
                 }
 
