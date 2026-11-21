@@ -44,6 +44,7 @@ namespace skia {
 namespace textlayout {
 class LineMetrics;
 class TextLine;
+class OneLineShaper;
 
 template <typename T> bool operator==(const SkSpan<T>& a, const SkSpan<T>& b) {
     return a.size() == b.size() && a.begin() == b.begin();
@@ -623,6 +624,10 @@ private:
     bool collectFastPathSegments(SkSpan<Block> blocks, std::vector<FastPathSegment>& segments);
     bool collectFastPathSegmentsInBlock(const Block& block, const SkString& paragraphLocale,
                                         std::vector<FastPathSegment>& segments);
+    // Attempts the shaping fast path; on success the paragraph is fully shaped
+    // and the caller must not run the harfbuzz path. On failure any partially
+    // shaped runs are rolled back and the shaper is reset for harfbuzz.
+    bool tryShapeFastPath(OneLineShaper& oneLineShaper);
     static FastPathCharClass classifyFastPathChar(SkUnichar unicode);
 #endif
     ParagraphPainter::PaintID updateTextStyleColorAndForeground(TextStyle& TextStyle, SkColor color);

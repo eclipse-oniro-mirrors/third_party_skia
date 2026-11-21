@@ -1721,6 +1721,56 @@ void ParagraphImpl::buildClusterTable()
     fClusters.emplace_back(this, EMPTY_RUN, 0, 0, this->text({fText.size(), fText.size()}), 0, 0);
 }
 
+#ifdef ENABLE_TEXT_ENHANCE
+// Attempts the shaping fast path: whitelisted characters only, exactly one
+// placeholder, at most one LTR bidi region. On success the runs and the
+// cluster table are complete and the caller must not shape again. On failure
+// (or ineligibility) any partially shaped runs are rolled back and the shaper
+// is reset so the caller can fall back to harfbuzz.
+bool ParagraphImpl::tryShapeFastPath(OneLineShaper& oneLineShaper) {
+    if (fPlaceholders.size() != 1 || fBidiRegions.size() > 1) {
+        return false;
+    }
+    uint8_t bidiLevel = fBidiRegions.empty() ? 0 : fBidiRegions[0].level;
+    auto blockRange = this->findAllBlocks(TextRange(0, fText.size()));
+    // The fast path only supports LTR (even bidi level); RTL and the empty
+    // block range (no style covers the text) fall through to harfbuzz.
+    if (bidiLevel % 2 != 0 || blockRange.start >= fTextStyles.size()) {
+        return false;
+    }
+    SkSpan<Block> blocks(this->blocks(blockRange));
+    std::vector<FastPathSegment> segments;
+    if (blocks.empty() || !this->collectFastPathSegments(blocks, segments)) {
+        return false;
+    }
+
+    const int runsBeforeFastPath = fRuns.size();
+    const int fontSwitchesBeforeFastPath = fFontSwitches.size();
+    fRuns.reserve(fRuns.size() + static_cast<int>(segments.size()));
+
+    SkScalar advanceX = 0;
+    bool fastPathSuccess = true;
+    for (const auto& segment : segments) {
+        if (!oneLineShaper.shapeFastPath(segment, bidiLevel, advanceX)) {
+            fastPathSuccess = false;
+            break;
+        }
+    }
+
+    if (fastPathSuccess && oneLineShaper.unresolvedGlyphs() == 0) {
+        fUnresolvedGlyphs = oneLineShaper.unresolvedGlyphs();
+        this->applySpacingAndBuildClusterTable();
+        return true;
+    }
+
+    // Roll back the partially shaped fast path runs before falling back to harfbuzz
+    fRuns.pop_back_n(fRuns.size() - runsBeforeFastPath);
+    fFontSwitches.pop_back_n(fFontSwitches.size() - fontSwitchesBeforeFastPath);
+    oneLineShaper = OneLineShaper(this);
+    return false;
+}
+#endif
+
 bool ParagraphImpl::shapeTextIntoEndlessLine() {
 #ifdef ENABLE_TEXT_ENHANCE
     TEXT_TRACE_FUNC();
@@ -1735,42 +1785,11 @@ bool ParagraphImpl::shapeTextIntoEndlessLine() {
     OneLineShaper oneLineShaper(this);
 
 #ifdef ENABLE_TEXT_ENHANCE
-    if (fPlaceholders.size() == 1 && fBidiRegions.size() <= 1) {
-        uint8_t bidiLevel = fBidiRegions.empty() ? 0 : fBidiRegions[0].level;
-        auto blockRange = this->findAllBlocks(TextRange(0, fText.size()));
-        // The fast path only supports LTR (even bidi level); RTL and the empty
-        // block range (no style covers the text) fall through to harfbuzz.
-        if (bidiLevel % 2 == 0 && blockRange.start < fTextStyles.size()) {
-            SkSpan<Block> blocks(this->blocks(blockRange));
-
-            std::vector<FastPathSegment> segments;
-            if (!blocks.empty() && this->collectFastPathSegments(blocks, segments)) {
-                const int runsBeforeFastPath = fRuns.size();
-                const int fontSwitchesBeforeFastPath = fFontSwitches.size();
-                fRuns.reserve(fRuns.size() + static_cast<int>(segments.size()));
-
-                SkScalar advanceX = 0;
-                bool fastPathSuccess = true;
-                for (const auto& segment : segments) {
-                    if (!oneLineShaper.shapeFastPath(segment, bidiLevel, advanceX)) {
-                        fastPathSuccess = false;
-                        break;
-                    }
-                }
-
-                if (fastPathSuccess && oneLineShaper.unresolvedGlyphs() == 0) {
-                    fUnresolvedGlyphs = oneLineShaper.unresolvedGlyphs();
-                    this->applySpacingAndBuildClusterTable();
-                    TEXT_LOGD("Use quick shape.");
-                    return true;
-                }
-
-                // Roll back the partially shaped fast path runs before falling back to harfbuzz
-                fRuns.pop_back_n(fRuns.size() - runsBeforeFastPath);
-                fFontSwitches.pop_back_n(fFontSwitches.size() - fontSwitchesBeforeFastPath);
-                oneLineShaper = OneLineShaper(this);
-            }
-        }
+    if (this->tryShapeFastPath(oneLineShaper)) {
+        TEXT_LOGD("Use quick shape.");
+        return true;
+    } else {
+        TEXT_LOGD("Use standard shape.");
     }
 #endif
 
