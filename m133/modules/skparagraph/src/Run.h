@@ -79,8 +79,8 @@ enum class ScaleOP {
 struct SplitPoint {
     size_t lineIndex{EMPTY_INDEX};
     size_t runIndex{EMPTY_INDEX};
-    size_t headClusterIndex{EMPTY_INDEX};
-    size_t tailClusterIndex{EMPTY_INDEX};
+    size_t headTextIndex{EMPTY_INDEX};
+    size_t tailTextIndex{EMPTY_INDEX};
 };
 
 struct ScaleParam {
@@ -192,7 +192,7 @@ public:
     size_t findSplitClusterPos(size_t target);
     void updateSplitRunRangeInfo(Run& splitRun, size_t headIndex, size_t tailIndex);
     void updateSplitRunMesureInfo(Run& splitRun, size_t startClusterPos, size_t endClusterPos);
-    void generateSplitRun(Run& splitRun, const SplitPoint& splitPoint);
+    bool generateSplitRun(Run& splitRun, const SplitPoint& splitPoint);
     void updatePlaceholderAlignmentIfNeeded(PlaceholderAlignment& alignment, TextVerticalAlign paragraphAlignment);
     // Replaces N glyphs at glyphStart with M glyphs from shapedRun (in-place, no split).
     // Recalculates positions for replaced glyphs and cascades spacing to remaining glyphs.
@@ -286,6 +286,8 @@ public:
 
     SkScalar getMaxRoundRectRadius() const { return fMaxRoundRectRadius; }
     void setMaxRoundRectRadius(SkScalar radius) { fMaxRoundRectRadius = radius; }
+    void setBorderWidth(SkScalar width) { fBorderWidth = width; }
+    SkScalar borderWidth() const { return fBorderWidth; }
 
     size_t getIndexInLine() const { return indexInLine; }
     void setIndexInLine(size_t index) { indexInLine = index; }
@@ -366,6 +368,7 @@ private:
     SkScalar fTopInGroup{0.0f};
     SkScalar fBottomInGroup{0.0f};
     SkScalar fMaxRoundRectRadius{0.0f};
+    SkScalar fBorderWidth{0.0}; // max effective border width over this run's clusters
     size_t indexInLine;
     SkScalar fCompressionBaselineShift{0.0f};
     SkScalar fVerticalAlignShift{0.0f};
@@ -530,6 +533,12 @@ public:
     bool isPunctuation() const { return fIsPunctuation; }
     bool isEllipsis() const { return fIsEllipsis; }
     bool needAutoSpacing() const { return fNeedAutoSpacing; }
+    void setBorderWidth(SkScalar width) { fBorderWidth = width; }
+    SkScalar borderWidth() const { return fBorderWidth; }
+    bool hasBorder() const { return fBorderWidth > 0; }
+    void setBorderSegmentId(int32_t id) { fBorderSegmentId = id; }
+    int32_t borderSegmentId() const { return fBorderSegmentId; }
+    SkScalar borderGapBefore(const Cluster* prev) const;
     void enableHyphenBreak() { fHyphenBreak = true; }
     bool isHyphenBreak() const { return fHyphenBreak; }
 	bool isStartCombineBreak() const;
@@ -598,6 +607,10 @@ private:
     SkScalar fWidth;
     SkScalar fHeight;
     SkScalar fHalfLetterSpacing;
+#ifdef ENABLE_TEXT_ENHANCE
+    SkScalar fBorderWidth{0.0};    // effective border width: 0 when no border or transparent color
+    int32_t fBorderSegmentId{-1};  // id of the merged border-box group this cluster belongs to
+#endif
 
     bool fIsWhiteSpaceBreak;
     bool fIsIntraWordBreak;
@@ -681,8 +694,13 @@ public:
         if (fForceStrut) {
             return;
         }
+#ifdef ENABLE_TEXT_ENHANCE
+        fAscent = std::min(fAscent, run->correctAscent() - run->borderWidth());
+        fDescent = std::max(fDescent, run->correctDescent() + run->borderWidth());
+#else
         fAscent = std::min(fAscent, run->correctAscent());
         fDescent = std::max(fDescent, run->correctDescent());
+#endif
         fLeading = std::max(fLeading, run->correctLeading());
 
         fRawAscent = std::min(fRawAscent, run->ascent());

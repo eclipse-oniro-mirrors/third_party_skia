@@ -71,7 +71,13 @@ public:
         fMap.set(entry);
         fLRU.addToHead(entry);
         while (fMap.count() > fMaxCount) {
+#ifdef ENABLE_TEXT_ENHANCE
+            if (!this->removeOldest()) {
+                break;
+            }
+#else
             this->remove(fLRU.tail()->fKey);
+#endif
         }
         return &entry->fValue;
     }
@@ -131,6 +137,23 @@ private:
             return HashK()(k);
         }
     };
+
+#ifdef ENABLE_TEXT_ENHANCE
+    bool removeOldest() {
+        Entry* tail = fLRU.tail();
+        if (tail == nullptr) {
+            return false;
+        }
+        Entry** value = fMap.find(tail->fKey);
+        if (value != nullptr && *value == tail) {
+            fMap.remove(tail->fKey);
+        }
+        PurgeCB()(tail->fKey, &tail->fValue);
+        fLRU.remove(tail);
+        delete tail;
+        return true;
+    }
+#endif
 
     void remove(const K& key) {
         Entry** value = fMap.find(key);

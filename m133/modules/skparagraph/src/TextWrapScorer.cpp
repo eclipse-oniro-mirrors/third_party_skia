@@ -16,6 +16,8 @@
 
 #include "modules/skparagraph/src/TextWrapScorer.h"
 
+#include <cmath>
+
 #include "log.h"
 #include "modules/skparagraph/include/Hyphenator.h"
 #include "modules/skparagraph/src/ParagraphImpl.h"
@@ -263,7 +265,7 @@ void TextWrapScorer::NextWidthFrame(Frame& f, std::vector<Frame>& stack) {
     }
 
     // ---- compute line score ----
-    SkScalar scoref = std::min(1.f, abs(currentTarget_ - f.iterWidth) / currentTarget_);
+    SkScalar scoref = std::min(1.f, std::abs(currentTarget_ - f.iterWidth) / currentTarget_);
     f.iterScore = int64_t((1.f - scoref) * UNDERFLOW_SCORE);
     f.iterScore *= f.iterScore;
 
@@ -284,7 +286,7 @@ void TextWrapScorer::CheckRecurseFrame(Frame& f, std::vector<Frame>& stack) {
     }
 
     // Case 1: this is the last line (remaining text fits in current width)
-    if (abs(adjustedWidth - f.param.remainingTextWidth) < 1.f) {
+    if (std::abs(adjustedWidth - f.param.remainingTextWidth) < 1.f) {
         if (parent_.getLineBreakStrategy() == LineBreakStrategy::HIGH_QUALITY) {
             f.overallScore = std::max(MINIMUM_FILL_RATIO, f.overallScore);
         } else {

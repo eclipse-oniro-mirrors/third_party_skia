@@ -676,11 +676,31 @@ void ParagraphImpl::fixOrphanedWords() {
             continue;
         }
 
+        // The reflow below moves clusters across the line break, so the auto/border
+        // spacing materialized into both lines (Run::fAutoSpacings and the gap totals
+        // counted into their advances) goes stale: the line-start entry gap must move
+        // to the reflowed word part. Capture the totals currently materialized for the
+        // old ranges with a dry run to re-materialize both lines afterwards. Ellipsis
+        // lines re-derive their widths in ellipsis processing and are left alone.
+        const bool prevLineHasEllipsis = fLines[lineIndex - 1].ellipsis() != nullptr;
+        SkScalar prevLineSpacing = prevLineHasEllipsis ? 0.0f
+            : fLines[lineIndex - 1].accumulateAutoSpacing(false);
+        SkScalar currLineSpacing = fLines[lineIndex].accumulateAutoSpacing(false);
+
         SkScalar adjustClusterWidth = fLines[lineIndex].reflowFromPreviousLine(firstWordStartOfLine);
         SkScalar preOriLineHeight = fLines[lineIndex - 1].sizes().height();
         fLines[lineIndex - 1].trimLine(firstWordStartOfLine, adjustClusterWidth);
         SkScalar preAfterLineHeight = fLines[lineIndex - 1].sizes().height();
         fLines[lineIndex].shiftOffsetY(preAfterLineHeight - preOriLineHeight);
+
+        // Re-materialize the spacing for the new ranges, previous line first: the
+        // materialization order follows line order so clusters shared by adjacent
+        // ghost ranges keep getting their shifts from the later line, exactly as at
+        // line creation.
+        if (!prevLineHasEllipsis) {
+            fLines[lineIndex - 1].rematerializeAutoSpacing(prevLineSpacing);
+        }
+        fLines[lineIndex].rematerializeAutoSpacing(currLineSpacing);
 
         modified = true;
     }
@@ -766,8 +786,8 @@ void ParagraphImpl::generateSplitPointsByLines(std::deque<SplitPoint>& splitPoin
         const TextLine& line = fLines[lineIndex];
         ClusterRange lineClusterRange = line.clustersWithSpaces();
         // Avoid abnormal split of the last line
-        if (lineIndex == (size_t)fLines.size() - 1) {
-            size_t lineEnd = line.clusters().end == 0 ? 0 : line.clusters().end - 1;
+        if (lineIndex == (size_t)fLines.size() - 1 && line.clusters().end > 0) {
+            size_t lineEnd = line.clusters().end - 1;
             lineClusterRange.end = cluster(lineEnd).run().clusterRange().end;
         }
         // Skip blank line
@@ -809,8 +829,8 @@ std::optional<SplitPoint> ParagraphImpl::generateSplitPoint(const ClusterRange& 
 
     SplitPoint splitPoint;
     splitPoint.runIndex = startCluster.run().index();
-    splitPoint.headClusterIndex = startCluster.textRange().start;
-    splitPoint.tailClusterIndex = endCluster.textRange().end;
+    splitPoint.headTextIndex = startCluster.textRange().start;
+    splitPoint.tailTextIndex = endCluster.textRange().end;
     auto it = std::find_if(fLines.begin(), fLines.end(), [&](const TextLine& line) {
         return line.clustersWithSpaces().contains(clusterRange);
     });
@@ -831,18 +851,38 @@ void ParagraphImpl::generateRunsBySplitPoints(std::deque<SplitPoint>& splitPoint
             continue;
         }
 
-        while (!splitPoints.empty()) {
+        // Generate all split runs of this run before committing any of them, so a
+        // failed split point never leaves the run partially split (clusters already
+        // re-based to split runs that would be discarded).
+        skia_private::TArray<Run, false> pendingSplits;
+        bool splitFailed = false;
+        while (!splitPoints.empty() && splitPoints.front().runIndex == runIndex) {
             SplitPoint& splitPoint = splitPoints.front();
-            size_t splitRunIndex = splitPoint.runIndex;
-            if (splitRunIndex != runIndex) {
+            pendingSplits.push_back(Run{run, newRunGlobalIndex + pendingSplits.size()});
+            if (!run.generateSplitRun(pendingSplits.back(), splitPoint)) {
+                splitFailed = true;
                 break;
             }
-
-            Run splitRun{run, newRunGlobalIndex++};
-            run.generateSplitRun(splitRun, splitPoint);
-            updateSplitRunClusterInfo(splitRun, true);
-            runs.push_back(std::move(splitRun));
             splitPoints.pop_front();
+        }
+
+        if (!splitFailed && !pendingSplits.empty()) {
+            for (Run& splitRun : pendingSplits) {
+                updateSplitRunClusterInfo(splitRun, true);
+                runs.push_back(std::move(splitRun));
+            }
+            newRunGlobalIndex += pendingSplits.size();
+        } else {
+            // Fallback: generateSplitRun only copies data out of the original run,
+            // so the whole run is still intact. Keep it unsplit and drop all its
+            // split points to avoid losing glyphs and corrupting cluster info.
+            LOGE("Failed to generate split run, keep the whole run instead");
+            run.fIndex = newRunGlobalIndex++;
+            updateSplitRunClusterInfo(run, false);
+            runs.push_back(run);
+            while (!splitPoints.empty() && splitPoints.front().runIndex == runIndex) {
+                splitPoints.pop_front();
+            }
         }
     }
 }
@@ -1672,6 +1712,12 @@ void ParagraphImpl::buildClusterTable()
     }
     fClusters.reserve_exact(fClusters.size() + cluster_count);
 
+#ifdef ENABLE_TEXT_ENHANCE
+    BorderMarkState borderMarkState;
+    borderMarkState.valid = !fTextStyles.empty();
+    fHasBorderClusters = false;
+#endif
+
     // Walk through all the run in the direction of input text
     for (auto& run : fRuns) {
         auto runIndex = run.index();
@@ -1683,17 +1729,21 @@ void ParagraphImpl::buildClusterTable()
             }
             // There are no glyphs but we want to have one cluster
             fClusters.emplace_back(this, runIndex, 0ul, 1ul, this->text(run.textRange()), run.advance().fX, run.advance().fY);
+#ifdef ENABLE_TEXT_ENHANCE
+            markClusterBorder(fClusters.back(), run, borderMarkState);
+#endif
             fCodeUnitProperties[run.textRange().start] |= SkUnicode::CodeUnitFlags::kSoftLineBreakBefore;
             fCodeUnitProperties[run.textRange().end] |= SkUnicode::CodeUnitFlags::kSoftLineBreakBefore;
         } else {
             // Walk through the glyph in the direction of input text
 #ifdef ENABLE_TEXT_ENHANCE
-            run.iterateThroughClustersInTextOrder([&run, runIndex, this](size_t glyphStart,
-                                                                   size_t glyphEnd,
-                                                                   size_t charStart,
-                                                                   size_t charEnd,
-                                                                   SkScalar width,
-                                                                   SkScalar height) {
+            run.iterateThroughClustersInTextOrder(
+                [&run, &borderMarkState, runIndex, this](size_t glyphStart,
+                                                         size_t glyphEnd,
+                                                         size_t charStart,
+                                                         size_t charEnd,
+                                                         SkScalar width,
+                                                         SkScalar height) {
 #else
             run.iterateThroughClustersInTextOrder([runIndex, this](size_t glyphStart,
                                                                    size_t glyphEnd,
@@ -1709,6 +1759,9 @@ void ParagraphImpl::buildClusterTable()
                 }
                 SkSpan<const char> text(fText.c_str() + charStart, charEnd - charStart);
                 fClusters.emplace_back(this, runIndex, glyphStart, glyphEnd, text, width, height);
+#ifdef ENABLE_TEXT_ENHANCE
+                markClusterBorder(fClusters.back(), run, borderMarkState);
+#endif
                 fCodeUnitProperties[charStart] |= SkUnicode::CodeUnitFlags::kGlyphClusterStart;
             });
         }
@@ -1722,6 +1775,41 @@ void ParagraphImpl::buildClusterTable()
 }
 
 #ifdef ENABLE_TEXT_ENHANCE
+// Marks a freshly created cluster with the effective border width of its block's RectStyle
+// and a border-box segment id: a maximal run of adjacent clusters in one styleId + RectStyle
+// group, matching TextLine::paintRoundRectGroup merging. A cluster covered by several blocks
+// follows the block at its start (initLimitHeightParam precedent). Also raises the owning
+// run's border width to the maximum of its clusters for line-height reservation. Called at
+// cluster creation inside buildClusterTable so border state is settled at birth and no
+// second pass over the cluster table is needed. The trailing sentinel cluster is created
+// after the creation loop and therefore stays unmarked.
+void ParagraphImpl::markClusterBorder(Cluster& cluster, Run& run, BorderMarkState& state) {
+    if (!state.valid) {
+        return;
+    }
+    while (state.blockIndex + 1 < fTextStyles.size() &&
+           fTextStyles[state.blockIndex + 1].fRange.start <= cluster.textRange().start) {
+        ++state.blockIndex;
+    }
+    const TextStyle& style = fTextStyles[state.blockIndex].fStyle;
+    const RectStyle& rect = style.getBackgroundRect();
+    const bool hasBorder = rect.borderWidth > 0;
+    if (hasBorder) {
+        fHasBorderClusters = true;
+        const bool sameGroup =
+                state.prevHasBorder && style.getStyleId() == state.prevStyleId && rect == state.prevRect;
+        if (!sameGroup) {
+            ++state.segmentId;
+        }
+        cluster.setBorderWidth(rect.borderWidth);
+        cluster.setBorderSegmentId(state.segmentId);
+        run.setBorderWidth(std::fmax(run.borderWidth(), rect.borderWidth));
+    }
+    state.prevHasBorder = hasBorder;
+    state.prevStyleId = style.getStyleId();
+    state.prevRect = rect;
+}
+
 // Attempts the shaping fast path: whitelisted characters only, exactly one
 // placeholder, at most one LTR bidi region. On success the runs and the
 // cluster table are complete and the caller must not shape again. On failure
@@ -2875,6 +2963,11 @@ bool ParagraphImpl::canPaintAllText() const
 TArray<TextIndex> ParagraphImpl::countSurroundingGraphemes(TextRange textRange) const {
     textRange = textRange.intersection({0, fText.size()});
     TArray<TextIndex> graphemes;
+    if (textRange.start >= textRange.end || textRange.start >= fCodeUnitProperties.size()) {
+        TEXT_LOGW("Invalid text range[%{public}zu %{public}zu] code size %{public}d", textRange.start, textRange.end,
+            fCodeUnitProperties.size());
+        return graphemes;
+    }
     if ((fCodeUnitProperties[textRange.start] & SkUnicode::CodeUnitFlags::kGraphemeStart) == 0) {
         // Count the previous partial grapheme
         graphemes.emplace_back(textRange.start);
@@ -3408,6 +3501,7 @@ std::unique_ptr<Paragraph> ParagraphImpl::CloneSelf()
     paragraph->fText = this->fText;
 #ifdef ENABLE_TEXT_ENHANCE
     paragraph->fHasTabCharacter = this->fHasTabCharacter;
+    paragraph->fHasBorderClusters = this->fHasBorderClusters;
 #endif
 
     paragraph->fState = this->fState;

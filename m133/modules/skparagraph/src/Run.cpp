@@ -429,6 +429,7 @@ Run::Run(const Run& run, size_t runIndex)
       fTopInGroup(run.fTopInGroup),
       fBottomInGroup(run.fBottomInGroup),
       fMaxRoundRectRadius(run.fMaxRoundRectRadius),
+      fBorderWidth(run.fBorderWidth),
       indexInLine(run.indexInLine),
       fCompressionBaselineShift(run.fCompressionBaselineShift),
       fVerticalAlignShift(run.fVerticalAlignShift),
@@ -519,20 +520,26 @@ void Run::updateSplitRunMesureInfo(Run& splitRun, size_t startClusterPos, size_t
     splitRun.fHalfLetterspacings.push_back(fHalfLetterspacings[startClusterPos]);
 }
 
-void Run::generateSplitRun(Run& splitRun, const SplitPoint& splitPoint) {
+bool Run::generateSplitRun(Run& splitRun, const SplitPoint& splitPoint) {
     if (fGlyphData->positions.empty()) {
-        return;
+        LOGE("Failed to split run: empty glyph positions");
+        return false;
     }
-    size_t tailIndex = splitPoint.tailClusterIndex;
-    size_t headIndex = splitPoint.headClusterIndex;
+    size_t tailIndex = splitPoint.tailTextIndex;
+    size_t headIndex = splitPoint.headTextIndex;
+    if (headIndex >= tailIndex || headIndex < fTextRange.start || tailIndex > fTextRange.end) {
+        LOGE("Failed to split run: split point out of text range");
+        return false;
+    }
     updateSplitRunRangeInfo(splitRun, headIndex, tailIndex);
     size_t startClusterPos = findSplitClusterPos(headIndex - fClusterStart);
     size_t endClusterPos = findSplitClusterPos(tailIndex - fClusterStart);
     if (endClusterPos >= clusterIndexes().size() || startClusterPos >= clusterIndexes().size()) {
         LOGE("Failed to find clusterPos by binary search algorithm");
-        return;
+        return false;
     }
     updateSplitRunMesureInfo(splitRun, startClusterPos, endClusterPos);
+    return true;
 }
 
 void Run::replaceCompressedGlyphs(size_t glyphStart, size_t oldCount, const Run& shapedRun) {
@@ -1111,6 +1118,25 @@ bool Cluster::isStartCombineBreak() const {
 
 bool Cluster::isEndCombineBreak() const {
     return fOwner->codeUnitHasProperty(fTextRange.end, SkUnicode::CodeUnitFlags::kCombine);
+}
+
+// Horizontal gap that must precede this cluster inside a line: the cluster's border
+// width when the cluster enters a border box (no in-line predecessor, or the previous
+// cluster is outside the box group), and the previous cluster's border width when this
+// is the first non-border cluster after a box.
+SkScalar Cluster::borderGapBefore(const Cluster* prev) const {
+    if (prev == nullptr) {
+        return hasBorder() ? fBorderWidth : 0.0f;
+    }
+    if (hasBorder() && (!prev->hasBorder() || prev->fBorderSegmentId != fBorderSegmentId)) {
+        // Entering a new box; when the previous cluster ends a different box, the boundary
+        // carries both the old box's exit w and the new box's entry w.
+        return prev->hasBorder() ? prev->fBorderWidth + fBorderWidth : fBorderWidth;
+    }
+    if (!hasBorder() && prev->hasBorder()) {
+        return prev->fBorderWidth;
+    }
+    return 0.0f;
 }
 #endif
 }  // namespace textlayout
