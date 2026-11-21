@@ -44,6 +44,7 @@ namespace skia {
 namespace textlayout {
 class LineMetrics;
 class TextLine;
+class OneLineShaper;
 
 template <typename T> bool operator==(const SkSpan<T>& a, const SkSpan<T>& b) {
     return a.size() == b.size() && a.begin() == b.begin();
@@ -177,6 +178,28 @@ struct ResolvedFontDescriptor {
 #endif
     TextIndex fTextStart;
 };
+
+#ifdef ENABLE_TEXT_ENHANCE
+// Character classes allowed by the shaping fast path.
+// The fast path only accepts characters from this whitelist; each class tags
+// the segment with the single dedicated typeface used to shape it.
+enum class FastPathCharClass : uint8_t {
+    kUnsupported,       // requires complex shaping (harfbuzz)
+    kCustom,            // user-specified font family, highest priority
+    kSimplifiedChinese, // simplified chinese and general text -> HarmonyOS Sans SC
+    kASCIIDigits,       // ASCII digits -> HarmonyOS Sans
+    kEmoji,             // emoji -> HMOS Color Emoji
+    kLineBreak,         // \n, \r: transparent to segmentation, attach to adjacent run
+};
+
+// A maximal text range of characters with the same fast path class.
+// Each segment is shaped into exactly one run by OneLineShaper::shapeFastPath.
+struct FastPathSegment {
+    TextRange fRange;
+    FastPathCharClass fClass;
+    const Block* fBlock;
+};
+#endif
 
 #ifndef ENABLE_TEXT_ENHANCE
 enum InternalState {
@@ -613,6 +636,16 @@ private:
     void getIntrinsicSize(SkScalar& maxIntrinsicWidth, SkScalar& minIntrinsicWidth, SkScalar& alphabeticBaseline,
         SkScalar& ideographicBaseline, bool& exceededMaxLines);
 
+#ifdef ENABLE_TEXT_ENHANCE
+    bool collectFastPathSegments(SkSpan<Block> blocks, std::vector<FastPathSegment>& segments);
+    bool collectFastPathSegmentsInBlock(const Block& block, const SkString& paragraphLocale,
+                                        std::vector<FastPathSegment>& segments);
+    // Attempts the shaping fast path; on success the paragraph is fully shaped
+    // and the caller must not run the harfbuzz path. On failure any partially
+    // shaped runs are rolled back and the shaper is reset for harfbuzz.
+    bool tryShapeFastPath(OneLineShaper& oneLineShaper);
+    static FastPathCharClass classifyFastPathChar(SkUnichar unicode);
+#endif
     ParagraphPainter::PaintID updateTextStyleColorAndForeground(TextStyle& TextStyle, SkColor color);
     TextBox getEmptyTextRect(RectHeightStyle rectHeightStyle) const;
     size_t prefixByteCountUntilChar(size_t index);

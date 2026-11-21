@@ -128,9 +128,8 @@ std::string getFamilyNameFromFont(const RSFont& font)
     return typeface == nullptr ? "" : typeface->GetFamilyName();
 }
 
-const ScaleParam& findCompressionConfigWithFont(const RSFont& font)
+const ScaleParam& findCompressionConfigWithFont(const std::shared_ptr<RSTypeface>& typeface)
 {
-    auto typeface = font.GetTypeface();
     if (typeface == nullptr) {
         return DEFAULT_SCALE_PARAM;
     }
@@ -147,6 +146,11 @@ const ScaleParam& findCompressionConfigWithFont(const RSFont& font)
         return DEFAULT_SCALE_PARAM;
     }
     return iter->second;
+}
+
+const ScaleParam& findCompressionConfigWithFont(const RSFont& font)
+{
+    return findCompressionConfigWithFont(font.GetTypeface());
 }
 
 void metricsIncludeFontPadding(RSFontMetrics* metrics, const RSFont& font)
@@ -283,18 +287,25 @@ Run::Run(ParagraphImpl* owner,
 
 #ifdef ENABLE_TEXT_ENHANCE
 void Run::handleAdapterHeight() {
-    RSFont decompressFont = font();
     if (fOwner && fOwner->getParagraphStyle().getFallbackLineSpacing()) {
         if (!SkScalarNearlyZero(fScaleParam.fontScale)) {
+            RSFont decompressFont = font();
             decompressFont.SetSize(font().GetSize() * TIBETAN_FALLBACKLINESPCING_HEIGHT_SCALE);
+            decompressFont.GetMetrics(&fFontMetrics);
+        } else {
+            font().GetMetrics(&fFontMetrics);
         }
-        decompressFont.GetMetrics(&fFontMetrics);
         return;
     }
 
     fFont.GetMetrics(&fFontMetrics);
-    scaleFontWithCompressionConfig(decompressFont, ScaleOP::DECOMPRESS, fScaleParam);
-    metricsIncludeFontPadding(&fFontMetrics, decompressFont);
+    if (!SkScalarNearlyZero(fScaleParam.fontScale)) {
+        RSFont decompressFont = font();
+        scaleFontWithCompressionConfig(decompressFont, ScaleOP::DECOMPRESS, fScaleParam);
+        metricsIncludeFontPadding(&fFontMetrics, decompressFont);
+    } else {
+        metricsIncludeFontPadding(&fFontMetrics, fFont);
+    }
     fCompressionBaselineShift = (fFontMetrics.fDescent - fFontMetrics.fAscent) * fScaleParam.baselineShiftScale;
 }
 
@@ -345,14 +356,18 @@ void Run::calculateMetrics() {
         calculateMetricsWithoutHeightScale();
         return;
     }
-    auto decompressFont = fFont;
-    scaleFontWithCompressionConfig(decompressFont, ScaleOP::DECOMPRESS, fScaleParam);
+    SkScalar decompressedSize = fFont.GetSize();
+    if (!SkScalarNearlyZero(fScaleParam.fontScale)) {
+        RSFont decompressFont = fFont;
+        scaleFontWithCompressionConfig(decompressFont, ScaleOP::DECOMPRESS, fScaleParam);
+        decompressedSize = decompressFont.GetSize();
+    }
     const auto fontIntrinsicHeight = fCorrectDescent - fCorrectAscent;
     if (nearlyZero(fontIntrinsicHeight)) {
         return;
     }
     SkScalar runHeight = fLineHeightStyle == LineHeightStyle::kFontSize ?
-        fHeightMultiplier * decompressFont.GetSize() : fHeightMultiplier * fontIntrinsicHeight;
+        fHeightMultiplier * decompressedSize : fHeightMultiplier * fontIntrinsicHeight;
     // If the maxLineHeight is less than 0, it is meaningless and the it is set to max of type float
     if (runHeight >= 0) {
         runHeight = std::min(std::max(runHeight, getMinLineHeight()), getMaxLineHeight());

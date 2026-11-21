@@ -9,6 +9,7 @@
 #include "include/TextGlobalConfig.h"
 #include "log.h"
 #include "trace.h"
+#include <securec.h>
 #endif
 
 #include <algorithm>
@@ -328,7 +329,8 @@ RSFont OneLineShaper::createConfiguredFont(
     std::shared_ptr<RSTypeface> typeface, const TextStyle& style) {
     RSFont font(typeface, style.getFontSize(), 1, 0);
     font.SetEdging(style.getFontEdging());
-    font.SetHinting(RSDrawing::FontHinting::NONE);
+    font.SetHinting(fParagraph->paragraphStyle().hintingIsOn()
+        ? RSDrawing::FontHinting::SLIGHT : RSDrawing::FontHinting::NONE);
     font.SetSubpixel(true);
     font.SetBaselineSnap(false);
     return font;
@@ -1107,7 +1109,8 @@ bool OneLineShaper::shape() {
                 // Create one more font to try
                 RSFont font(std::move(typeface), block.fStyle.getCorrectFontSize(), 1, 0);
                 font.SetEdging(block.fStyle.getFontEdging());
-                font.SetHinting(RSDrawing::FontHinting::NONE);
+                font.SetHinting(fParagraph->paragraphStyle().hintingIsOn()
+                    ? RSDrawing::FontHinting::SLIGHT : RSDrawing::FontHinting::NONE);
                 font.SetSubpixel(true);
                 font.SetBaselineSnap(false);
 #else
@@ -1372,6 +1375,287 @@ SkUnichar OneLineShaper::getEmojiSequenceStart(SkUnicode* unicode, const char** 
 
     return -1;
 }
+
+#ifdef ENABLE_TEXT_ENHANCE
+constexpr const char* kFastPathSCFamily = "HarmonyOS Sans SC";
+constexpr const char* kFastPathFamily = "HarmonyOS Sans";
+constexpr const char* kFastPathEmojiFamily = "HMOS Color Emoji";
+
+// Resolves the fast path typefaces through the font collection, keeping the
+// style's font style and font arguments (variation axes) applied to the
+// matched typeface.
+std::shared_ptr<RSTypeface> OneLineShaper::findFastPathTypeface(
+        const std::vector<SkString>& familyNames, const TextStyle& style) {
+    auto typefaces = fParagraph->fFontCollection->findTypefaces(
+        familyNames, style.getFontStyle(), style.getFontArguments());
+    return typefaces.empty() ? nullptr : typefaces.front();
+}
+
+std::shared_ptr<RSTypeface> OneLineShaper::findFastPathTypeface(
+        const char* familyName, const TextStyle& style) {
+    std::vector<SkString> familyNames{SkString(familyName)};
+    return this->findFastPathTypeface(familyNames, style);
+}
+
+// Shapes one fast path segment (a text range of consecutive characters with the
+// same tag) without harfbuzz. The segment tag maps directly to one dedicated
+// typeface: custom -> the user-specified family (highest priority), simplified
+// chinese -> HarmonyOS Sans SC, emoji -> HMOS Color Emoji; there is no typeface
+// iteration. If that typeface does not resolve every glyph of the segment, the
+// caller falls back to harfbuzz.
+void OneLineShaper::resolveFastPathTypeface(const FastPathSegment& segment,
+                                            const TextStyle& style,
+                                            std::shared_ptr<RSTypeface>& typeface,
+                                            ScaleParam& scaleParam) {
+    FastPathTypefaces& cachedTypefaces = fFastPathTypefaces[segment.fBlock];
+    if (segment.fClass == FastPathCharClass::kEmoji) {
+        if (cachedTypefaces.fEmoji == nullptr) {
+            cachedTypefaces.fEmoji = this->findFastPathTypeface(kFastPathEmojiFamily, style);
+            if (cachedTypefaces.fEmoji != nullptr) {
+                cachedTypefaces.fEmojiScale = findCompressionConfigWithFont(cachedTypefaces.fEmoji);
+            }
+        }
+        typeface = cachedTypefaces.fEmoji;
+        scaleParam = cachedTypefaces.fEmojiScale;
+    } else if (segment.fClass == FastPathCharClass::kSimplifiedChinese) {
+        if (cachedTypefaces.fSimplifiedChineseSC == nullptr) {
+            cachedTypefaces.fSimplifiedChineseSC = this->findFastPathTypeface(kFastPathSCFamily, style);
+            if (cachedTypefaces.fSimplifiedChineseSC != nullptr) {
+                cachedTypefaces.fSimplifiedChineseSCScale =
+                    findCompressionConfigWithFont(cachedTypefaces.fSimplifiedChineseSC);
+            }
+        }
+        typeface = cachedTypefaces.fSimplifiedChineseSC;
+        scaleParam = cachedTypefaces.fSimplifiedChineseSCScale;
+    } else if (segment.fClass == FastPathCharClass::kASCIIDigits) {
+        if (cachedTypefaces.fSimplifiedChinese == nullptr) {
+            cachedTypefaces.fSimplifiedChinese = this->findFastPathTypeface(kFastPathFamily, style);
+            if (cachedTypefaces.fSimplifiedChinese != nullptr) {
+                cachedTypefaces.fSimplifiedChineseScale =
+                    findCompressionConfigWithFont(cachedTypefaces.fSimplifiedChinese);
+            }
+        }
+        typeface = cachedTypefaces.fSimplifiedChinese;
+        scaleParam = cachedTypefaces.fSimplifiedChineseScale;
+    } else {
+        if (cachedTypefaces.fCustom == nullptr) {
+            cachedTypefaces.fCustom = this->findFastPathTypeface(style.getFontFamilies(), style);
+            if (cachedTypefaces.fCustom != nullptr) {
+                cachedTypefaces.fCustomScale = findCompressionConfigWithFont(cachedTypefaces.fCustom);
+            }
+        }
+        typeface = cachedTypefaces.fCustom;
+        scaleParam = cachedTypefaces.fCustomScale;
+    }
+}
+
+bool OneLineShaper::shapeFastPath(const FastPathSegment& segment,
+                                  uint8_t bidiLevel,
+                                  SkScalar& advanceX) {
+    const Block& block = *segment.fBlock;
+    const TextStyle& style = block.fStyle;
+
+    std::shared_ptr<RSTypeface> typeface = nullptr;
+    ScaleParam scaleParam = DEFAULT_SCALE_PARAM;
+    // Todo: 由于目前主题字场景下, 同时存在下发主题字 family 和不下发(TextStyle 中的 fontFamilies)均能触发主题字应用
+    // 无法为不下发主题字 family 时特意指定 family, 故暂时写成如下形式, 只为测试 sc emoji 混排时性能
+    this->resolveFastPathTypeface(segment, style, typeface, scaleParam);
+
+    if (typeface == nullptr) {
+        return false;
+    }
+
+    RSFont font = this->createFastPathFont(typeface, style, scaleParam);
+
+    FastPathRunParams params = {
+        style.getHeightOverride() ? style.getHeight() : 0,
+        style.getHalfLeading(),
+        style.getBaselineShift() + style.getBadgeBaseLineShift(),
+        advanceX,
+    };
+    Run* run = createRunFromFont(font, fParagraph->fText, segment.fRange,
+                                 bidiLevel, params);
+
+    if (run == nullptr) {
+        return false;
+    }
+
+    fParagraph->fFontSwitches.emplace_back(segment.fRange.start, run->fFont);
+    run->fIndex = fParagraph->fRuns.size() - 1;
+
+    advanceX += run->fAdvance.fX;
+    fAdvance.fX = advanceX;
+    fAdvance.fY = std::max(fAdvance.fY, run->fAdvance.fY);
+
+    return true;
+}
+
+RSFont OneLineShaper::createFastPathFont(std::shared_ptr<RSTypeface> typeface,
+                                         const TextStyle& style,
+                                         const ScaleParam& scaleParam) {
+    RSFont font(std::move(typeface), style.getCorrectFontSize(), 1, 0);
+    font.SetEdging(style.getFontEdging());
+    font.SetHinting(fParagraph->paragraphStyle().hintingIsOn()
+        ? RSDrawing::FontHinting::SLIGHT : RSDrawing::FontHinting::NONE);
+    font.SetSubpixel(true);
+    font.SetBaselineSnap(false);
+
+    // Apply fake bold and/or italic to match the harfbuzz path
+    // (OneLineShaper.cpp:1129-1136).
+    int wantedWeight = style.getFontStyle().GetWeight();
+    bool fakeBold = style.isFakeBoldEnabled() &&
+        wantedWeight >= RSFontStyle::SEMI_BOLD_WEIGHT && !style.isCustomSymbol() &&
+        wantedWeight - font.GetTypeface()->GetFontStyle().GetWeight() >= 200;
+    bool fakeItalic = style.getFontStyle().GetSlant() == RSFontStyle::ITALIC_SLANT &&
+        font.GetTypeface()->GetFontStyle().GetSlant() != RSFontStyle::ITALIC_SLANT;
+    font.SetEmbolden(fakeBold);
+    font.SetSkewX(fakeItalic ? -SK_Scalar1 / 4 : 0);
+
+    scaleFontWithCompressionConfig(font, ScaleOP::COMPRESS, scaleParam);
+
+    return font;
+}
+
+static bool computeFastPathGlyphs(const RSFont& font, const char* textStart, size_t textLen,
+                                  skia_private::STArray<64, SkGlyphID, true>* glyphs,
+                                  skia_private::STArray<64, SkScalar, true>* widths,
+                                  SkVector* advance) {
+    size_t glyphCount = font.CountText(textStart, textLen, RSDrawing::TextEncoding::UTF8);
+    if (glyphCount <= 0) {
+        return false;
+    }
+    glyphs->push_back_n(glyphCount);
+    font.TextToGlyphs(textStart, textLen, RSDrawing::TextEncoding::UTF8,
+                      glyphs->begin(), glyphCount);
+    widths->push_back_n(glyphCount);
+    font.GetWidths(glyphs->begin(), glyphCount, widths->begin());
+
+    // Hard line breaks (\n, \r) have no glyph mapping (glyph 0). HarfBuzz shapes
+    // them via skhb_glyph_h_advance and therefore keeps the .notdef advance, so
+    // leave both the glyph and its width untouched to match that path. Any other
+    // glyph 0 means the typeface did not resolve the character.
+    const char* ptr = textStart;
+    const char* end = textStart + textLen;
+    for (size_t i = 0; i < glyphCount; ++i) {
+        SkUnichar unicode = SkUTF::NextUTF8(&ptr, end);
+        if (unicode == 0x0A || unicode == 0x0D) {
+            continue;
+        }
+        if ((*glyphs)[i] == 0) {
+            return false;
+        }
+    }
+
+    SkScalar totalAdvance = 0;
+    for (size_t i = 0; i < glyphCount; ++i) {
+        totalAdvance += (*widths)[i];
+    }
+    advance->fX = totalAdvance;
+    RSFontMetrics metrics;
+    font.GetMetrics(&metrics);
+    advance->fY = metrics.fDescent - metrics.fAscent + metrics.fLeading;
+    return true;
+}
+
+Run* OneLineShaper::createRunFromFont(const RSFont& font,
+                                      const SkString& fullText,
+                                      TextRange textRange,
+                                      uint8_t bidiLevel,
+                                      const FastPathRunParams& params) {
+    const char* textStart = fullText.c_str() + textRange.start;
+    size_t textLen = textRange.width();
+    SkASSERT(textRange.end <= fullText.size());
+    SkASSERT(bidiLevel % 2 == 0);
+
+    skia_private::STArray<64, SkGlyphID, true> glyphs;
+    skia_private::STArray<64, SkScalar, true> widths;
+    SkVector advance;
+    if (!computeFastPathGlyphs(font, textStart, textLen, &glyphs, &widths, &advance)) {
+        return nullptr;
+    }
+    size_t glyphCount = glyphs.size();
+
+    SkShaper::RunHandler::RunInfo info = {
+        font,
+        bidiLevel,
+        advance,
+        static_cast<size_t>(glyphCount),
+        SkShaper::RunHandler::Range(0, textLen)
+    };
+
+    // Construct the run in place in fRuns to avoid a make_shared<Run> plus a
+    // second copy via emplace_back (which would deep-copy the Font again).
+    fParagraph->fRuns.emplace_back(fParagraph, info, textRange.start,
+                                   params.heightMultiplier, params.useHalfLeading,
+                                   params.baselineShift, ++fUniqueRunId, params.offsetX);
+    Run* run = &fParagraph->fRuns.back();
+
+    this->fillRunGeometry(run, {glyphs, widths}, textStart, textLen, params.offsetX);
+
+    return run;
+}
+
+void OneLineShaper::fillRunGeometry(Run* run, const FastPathGlyphRun& glyphRun,
+                                    const char* textStart, size_t textLen, SkScalar offsetX) {
+    size_t glyphCount = glyphRun.glyphs.size();
+    size_t destBytes = static_cast<size_t>(run->fGlyphs.size()) * sizeof(SkGlyphID);
+    size_t srcBytes = glyphCount * sizeof(SkGlyphID);
+    if (memcpy_s(run->fGlyphs.begin(), destBytes, glyphRun.glyphs.begin(), srcBytes) != EOK) {
+        TEXT_LOGE("fillRunGeometry memcpy_s failed: glyphCount=%{public}zu "
+                  "destBytes=%{public}zu srcBytes=%{public}zu", glyphCount, destBytes, srcBytes);
+        SkASSERT(false);  // destBytes >= srcBytes by construction; failure indicates a logic bug
+    }
+
+    // Absolute positions: fPositions[i] = offsetX + sum(widths[0..i-1]), matching
+    // HarfBuzz's `advance + point` semantics (SkShaper_harfbuzz.cpp:662).
+    SkScalar relX = 0;
+    run->fPositions[0].fX = offsetX;
+    run->fPositions[0].fY = 0;
+    for (size_t i = 0; i < glyphCount; ++i) {
+        relX += glyphRun.widths[i];
+        run->fPositions[i + 1].fX = offsetX + relX;
+        run->fPositions[i + 1].fY = 0;
+    }
+
+    for (size_t i = 0; i <= glyphCount; ++i) {
+        run->fOffsets[i] = {0, 0};
+    }
+
+    calculateClusterIndexes(run, textStart, textLen);
+
+    for (size_t i = 0; i < glyphCount; ++i) {
+        run->fGlyphAdvances[i].fX = glyphRun.widths[i];
+        run->fGlyphAdvances[i].fY = 0;
+    }
+    run->fGlyphAdvances[glyphCount] = {0, 0};
+}
+
+void OneLineShaper::calculateClusterIndexes(Run* run,
+                                           const char* textStart,
+                                           size_t textLen) {
+    size_t glyphCount = run->size();
+    const char* ptr = textStart;
+    const char* end = textStart + textLen;
+
+    if (run->leftToRight()) {
+        size_t clusterPos = 0;
+        for (size_t i = 0; i < glyphCount && ptr < end; ++i) {
+            run->fClusterIndexes[i] = clusterPos;
+            SkUTF::NextUTF8(&ptr, end);
+            clusterPos = ptr - textStart;
+        }
+        run->fClusterIndexes[glyphCount] = textLen;
+    } else {
+        run->fClusterIndexes[0] = textLen;
+        size_t clusterPos = 0;
+        for (size_t i = 1; i <= glyphCount && ptr < end; ++i) {
+            SkUTF::NextUTF8(&ptr, end);
+            clusterPos = ptr - textStart;
+            run->fClusterIndexes[i] = clusterPos;
+        }
+    }
+}
+#endif
 
 }  // namespace textlayout
 }  // namespace skia

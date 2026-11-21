@@ -13,6 +13,23 @@ namespace skia {
 namespace textlayout {
 
 class ParagraphImpl;
+
+// Aggregates the shaping/geometry scalars passed to createRunFromFont so the
+// fast path run constructor stays within the parameter-count guideline.
+struct FastPathRunParams {
+    SkScalar heightMultiplier;
+    bool useHalfLeading;
+    SkScalar baselineShift;
+    SkScalar offsetX;
+};
+
+// Aggregates the glyph IDs and advances produced by computeFastPathGlyphs so
+// fillRunGeometry stays within the parameter-count guideline.
+struct FastPathGlyphRun {
+    const skia_private::STArray<64, SkGlyphID, true>& glyphs;
+    const skia_private::STArray<64, SkScalar, true>& widths;
+};
+
 class OneLineShaper : public SkShaper::RunHandler {
 public:
     explicit OneLineShaper(ParagraphImpl* paragraph)
@@ -28,13 +45,26 @@ public:
 
     size_t unresolvedGlyphs() { return fUnresolvedGlyphs; }
 
-    /**
-     * This method is based on definition of https://unicode.org/reports/tr51/#def_emoji_sequence
-     * It determines if the string begins with an emoji sequence and,
-     * if so, return the first codepoint, moving 'begin' pointer to the next once.
-     * Otherwise it does not move the pointer and returns -1.
-     */
     static SkUnichar getEmojiSequenceStart(SkUnicode* unicode, const char** begin, const char* end);
+
+#ifdef ENABLE_TEXT_ENHANCE
+    bool shapeFastPath(const FastPathSegment& segment, uint8_t bidiLevel, SkScalar& advanceX);
+    std::shared_ptr<RSTypeface> findFastPathTypeface(const std::vector<SkString>& familyNames,
+                                                     const TextStyle& style);
+    std::shared_ptr<RSTypeface> findFastPathTypeface(const char* familyName, const TextStyle& style);
+    RSFont createFastPathFont(std::shared_ptr<RSTypeface> typeface, const TextStyle& style,
+                              const ScaleParam& scaleParam);
+    Run* createRunFromFont(const RSFont& font,
+                           const SkString& fullText,
+                           TextRange textRange,
+                           uint8_t bidiLevel,
+                           const FastPathRunParams& params);
+    void resolveFastPathTypeface(const FastPathSegment& segment, const TextStyle& style,
+                                 std::shared_ptr<RSTypeface>& typeface, ScaleParam& scaleParam);
+    void fillRunGeometry(Run* run, const FastPathGlyphRun& glyphs,
+                         const char* textStart, size_t textLen, SkScalar offsetX);
+    void calculateClusterIndexes(Run* run, const char* textStart, size_t textLen);
+#endif
 
 private:
 
@@ -160,6 +190,25 @@ private:
     std::shared_ptr<Run> fCurrentRun;
     std::deque<RunBlock> fUnresolvedBlocks;
     std::vector<RunBlock> fResolvedBlocks;
+
+#ifdef ENABLE_TEXT_ENHANCE
+    // Per-block fast path typefaces. A block owns a single TextStyle (hence a
+    // single fontStyle + fontArguments), so its variable-font typefaces are
+    // resolved once instead of once per fast path segment. This avoids the
+    // per-segment FamilyKey construction (vector<SkString> copy + hash) and
+    // shared_lock inside FontCollection::findTypefaces.
+    struct FastPathTypefaces {
+        std::shared_ptr<RSTypeface> fSimplifiedChineseSC;
+        std::shared_ptr<RSTypeface> fSimplifiedChinese;
+        std::shared_ptr<RSTypeface> fEmoji;
+        std::shared_ptr<RSTypeface> fCustom;
+        ScaleParam fSimplifiedChineseSCScale;
+        ScaleParam fSimplifiedChineseScale;
+        ScaleParam fEmojiScale;
+        ScaleParam fCustomScale;
+    };
+    std::unordered_map<const Block*, FastPathTypefaces> fFastPathTypefaces;
+#endif
 
     // Keeping all resolved typefaces
     struct FontKey {
