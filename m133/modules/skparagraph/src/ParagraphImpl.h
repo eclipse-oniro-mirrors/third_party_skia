@@ -621,6 +621,8 @@ private:
 
 #ifdef ENABLE_TEXT_ENHANCE
     bool collectFastPathSegments(SkSpan<Block> blocks, std::vector<FastPathSegment>& segments);
+    bool collectFastPathSegmentsInBlock(const Block& block, const SkString& paragraphLocale,
+                                        std::vector<FastPathSegment>& segments);
     static FastPathCharClass classifyFastPathChar(SkUnichar unicode);
 #endif
     ParagraphPainter::PaintID updateTextStyleColorAndForeground(TextStyle& TextStyle, SkColor color);

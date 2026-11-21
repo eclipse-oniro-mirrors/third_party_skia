@@ -4223,6 +4223,122 @@ static bool isBlockStyleEligible(const TextStyle& style, const SkString& paragra
     return true;
 }
 
+// Segmentation state accumulated while scanning one block for fast path
+// segments: the segment currently being built, plus the leading line-break run
+// that has no preceding segment to attach to and must join the next one.
+struct FastPathScanState {
+    size_t fSegmentStart = 0;
+    FastPathCharClass fSegmentClass = FastPathCharClass::kUnsupported;
+    bool fHasPendingLineBreak = false;
+    size_t fPendingLineBreakStart = 0;
+};
+
+// Remembers where a leading line-break run starts so that it can join the
+// following run (harfbuzz keeps control characters in the current font run).
+static void recordFastPathLineBreak(size_t lineBreakOffset, FastPathScanState& state) {
+    if (state.fSegmentClass == FastPathCharClass::kUnsupported && !state.fHasPendingLineBreak) {
+        state.fHasPendingLineBreak = true;
+        state.fPendingLineBreakStart = lineBreakOffset;
+    }
+}
+
+// Opens the current segment on its first classified character (folding in the
+// pending leading line-break run, if any) or closes the previous segment when
+// the character class changes.
+static void advanceFastPathSegment(const Block& block, size_t charTextOffset,
+                                   FastPathCharClass charClass,
+                                   std::vector<FastPathSegment>& segments,
+                                   FastPathScanState& state) {
+    const size_t charTextStart = block.fRange.start + charTextOffset;
+    if (state.fSegmentClass == FastPathCharClass::kUnsupported) {
+        state.fSegmentClass = charClass;
+        state.fSegmentStart = state.fHasPendingLineBreak
+            ? block.fRange.start + state.fPendingLineBreakStart
+            : charTextStart;
+        state.fHasPendingLineBreak = false;
+    } else if (charClass != state.fSegmentClass) {
+        segments.emplace_back(FastPathSegment{
+            TextRange(state.fSegmentStart, charTextStart), state.fSegmentClass, &block});
+        state.fSegmentClass = charClass;
+        state.fSegmentStart = charTextStart;
+    }
+}
+
+// Emits the segment accumulated for the scanned block, merging it with the
+// previous segment when both would be shaped by the same run.
+static void finishFastPathBlockSegments(const Block& block, FastPathScanState& state,
+                                        std::vector<FastPathSegment>& segments) {
+    if (state.fSegmentClass == FastPathCharClass::kUnsupported && state.fHasPendingLineBreak) {
+        // The block consists only of line breaks: shape them with the block's
+        // own font, as harfbuzz would.
+        state.fSegmentClass = FastPathCharClass::kCustom;
+        state.fSegmentStart = block.fRange.start + state.fPendingLineBreakStart;
+    }
+    if (state.fSegmentClass == FastPathCharClass::kUnsupported) {
+        return;
+    }
+    TextRange segmentRange(state.fSegmentStart, block.fRange.end);
+    // Mirror OneLineShaper::iterateThroughFontStyles: adjacent blocks whose
+    // shaping attributes match are shaped as a single run, so extend the
+    // previous segment instead of emitting a separate one.
+    if (!segments.empty()) {
+        FastPathSegment& prev = segments.back();
+        if (prev.fClass == state.fSegmentClass && prev.fRange.end == segmentRange.start &&
+            prev.fBlock->fStyle.matchOneAttribute(StyleType::kFont, block.fStyle)) {
+            prev.fRange.end = segmentRange.end;
+            return;
+        }
+    }
+    segments.emplace_back(FastPathSegment{segmentRange, state.fSegmentClass, &block});
+}
+
+// Scans one block for fast path eligibility and appends its segments. Returns
+// false as soon as the block or any of its characters is not eligible.
+bool ParagraphImpl::collectFastPathSegmentsInBlock(const Block& block,
+                                                   const SkString& paragraphLocale,
+                                                   std::vector<FastPathSegment>& segments) {
+    const TextStyle& style = block.fStyle;
+    if (!isBlockStyleEligible(style, paragraphLocale)) {
+        return false;
+    }
+    // The custom font tag has the highest priority: it replaces the script
+    // tags of every non-emoji character of the block
+    bool useCustomFont = requestsCustomFont(
+        style.getFontFamilies(), fFontCollection->getDefaultFamilyNames());
+
+    auto text = this->text(block.fRange);
+    const char* ptr = text.begin();
+    const char* end = text.end();
+    FastPathScanState state;
+    state.fSegmentStart = block.fRange.start;
+
+    while (ptr < end) {
+        const char* charStart = ptr;
+        SkUnichar unicode = SkUTF::NextUTF8(&ptr, end);
+        FastPathCharClass charClass = classifyFastPathChar(unicode);
+        const size_t charTextOffset = static_cast<size_t>(charStart - text.begin());
+
+        // Hard line breaks are transparent to segmentation: they carry no
+        // glyph of their own and, like harfbuzz's control-codepoint handling,
+        // never start a new run. They stay in the current run, or - at the
+        // start of the text - join the next one.
+        if (charClass == FastPathCharClass::kLineBreak) {
+            recordFastPathLineBreak(charTextOffset, state);
+            continue;
+        }
+        if (charClass == FastPathCharClass::kUnsupported) {
+            return false;
+        }
+        if (useCustomFont && charClass != FastPathCharClass::kEmoji) {
+            charClass = FastPathCharClass::kCustom;
+        }
+        advanceFastPathSegment(block, charTextOffset, charClass, segments, state);
+    }
+
+    finishFastPathBlockSegments(block, state, segments);
+    return true;
+}
+
 // Checks every block for fast path eligibility and splits the text into segments
 // of consecutive characters with the same tag. Each segment is shaped into one
 // run by OneLineShaper::shapeFastPath. Returns false (with no usable output) as
@@ -4232,87 +4348,8 @@ bool ParagraphImpl::collectFastPathSegments(SkSpan<Block> blocks,
     const SkString paragraphLocale = this->paragraphStyle().getTextStyle().getLocale();
     segments.reserve(segments.size() + blocks.size());
     for (const Block& block : blocks) {
-        const TextStyle& style = block.fStyle;
-        if (!isBlockStyleEligible(style, paragraphLocale)) {
+        if (!collectFastPathSegmentsInBlock(block, paragraphLocale, segments)) {
             return false;
-        }
-        // The custom font tag has the highest priority: it replaces the script
-        // tags of every non-emoji character of the block
-        bool useCustomFont = requestsCustomFont(
-            style.getFontFamilies(), fFontCollection->getDefaultFamilyNames());
-
-        auto text = this->text(block.fRange);
-        const char* ptr = text.begin();
-        const char* end = text.end();
-
-        size_t segmentStart = block.fRange.start;
-        FastPathCharClass segmentClass = FastPathCharClass::kUnsupported;
-        // Leading line breaks have no preceding segment to attach to; they must
-        // join the following run (harfbuzz keeps control characters in the
-        // current font run), so remember where such a run starts.
-        bool hasPendingLineBreak = false;
-        size_t pendingLineBreakStart = 0;
-
-        while (ptr < end) {
-            const char* charStart = ptr;
-            SkUnichar unicode = SkUTF::NextUTF8(&ptr, end);
-            FastPathCharClass charClass = classifyFastPathChar(unicode);
-
-            // Hard line breaks are transparent to segmentation: they carry no
-            // glyph of their own and, like harfbuzz's control-codepoint handling,
-            // never start a new run. They stay in the current run, or - at the
-            // start of the text - join the next one.
-            if (charClass == FastPathCharClass::kLineBreak) {
-                if (segmentClass == FastPathCharClass::kUnsupported && !hasPendingLineBreak) {
-                    hasPendingLineBreak = true;
-                    pendingLineBreakStart = charStart - text.begin();
-                }
-                continue;
-            }
-
-            if (charClass == FastPathCharClass::kUnsupported) {
-                return false;
-            }
-            if (useCustomFont && charClass != FastPathCharClass::kEmoji) {
-                charClass = FastPathCharClass::kCustom;
-            }
-            if (segmentClass == FastPathCharClass::kUnsupported) {
-                segmentClass = charClass;
-                segmentStart = block.fRange.start + (hasPendingLineBreak
-                    ? pendingLineBreakStart
-                    : static_cast<size_t>(charStart - text.begin()));
-                hasPendingLineBreak = false;
-            } else if (charClass != segmentClass) {
-                segments.emplace_back(FastPathSegment{
-                    TextRange(segmentStart, block.fRange.start + (charStart - text.begin())),
-                    segmentClass, &block});
-                segmentClass = charClass;
-                segmentStart = block.fRange.start + (charStart - text.begin());
-            }
-        }
-
-        if (segmentClass == FastPathCharClass::kUnsupported && hasPendingLineBreak) {
-            // The block consists only of line breaks: shape them with the block's
-            // own font, as harfbuzz would.
-            segmentClass = FastPathCharClass::kCustom;
-            segmentStart = block.fRange.start + pendingLineBreakStart;
-        }
-
-        if (segmentClass != FastPathCharClass::kUnsupported) {
-            TextRange segmentRange(segmentStart, block.fRange.end);
-            // Mirror OneLineShaper::iterateThroughFontStyles: adjacent blocks whose
-            // shaping attributes match are shaped as a single run, so extend the
-            // previous segment instead of emitting a separate one.
-            if (!segments.empty()) {
-                FastPathSegment& prev = segments.back();
-                if (prev.fClass == segmentClass &&
-                    prev.fRange.end == segmentRange.start &&
-                    prev.fBlock->fStyle.matchOneAttribute(StyleType::kFont, block.fStyle)) {
-                    prev.fRange.end = segmentRange.end;
-                    continue;
-                }
-            }
-            segments.emplace_back(FastPathSegment{segmentRange, segmentClass, &block});
         }
     }
     return true;
