@@ -9,6 +9,7 @@
 #include "include/TextGlobalConfig.h"
 #include "log.h"
 #include "trace.h"
+#include <securec.h>
 #endif
 
 #include <algorithm>
@@ -1597,7 +1598,13 @@ Run* OneLineShaper::createRunFromFont(const RSFont& font,
 void OneLineShaper::fillRunGeometry(Run* run, const FastPathGlyphRun& glyphRun,
                                     const char* textStart, size_t textLen, SkScalar offsetX) {
     size_t glyphCount = glyphRun.glyphs.size();
-    memcpy(run->fGlyphs.begin(), glyphRun.glyphs.begin(), glyphCount * sizeof(SkGlyphID));
+    size_t destBytes = static_cast<size_t>(run->fGlyphs.size()) * sizeof(SkGlyphID);
+    size_t srcBytes = glyphCount * sizeof(SkGlyphID);
+    if (memcpy_s(run->fGlyphs.begin(), destBytes, glyphRun.glyphs.begin(), srcBytes) != EOK) {
+        TEXT_LOGE("fillRunGeometry memcpy_s failed: glyphCount=%{public}zu "
+                  "destBytes=%{public}zu srcBytes=%{public}zu", glyphCount, destBytes, srcBytes);
+        SkASSERT(false);  // destBytes >= srcBytes by construction; failure indicates a logic bug
+    }
 
     // Absolute positions: fPositions[i] = offsetX + sum(widths[0..i-1]), matching
     // HarfBuzz's `advance + point` semantics (SkShaper_harfbuzz.cpp:662).
