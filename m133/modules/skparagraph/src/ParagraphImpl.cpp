@@ -4104,14 +4104,10 @@ static bool isFastPathExcludedBracket(SkUnichar unicode) {
                               std::end(kFastPathExcludedBrackets), unicode);
 }
 
-FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
-    // Hot path: CJK Unified Ideographs — the overwhelming majority of Chinese
-    // text. A single range check avoids walking the emoji whitelist first
-    // (all emoji codepoints live outside this range).
-    if (unicode >= 0x4E00 && unicode <= 0x9FFF) {
-        return FastPathCharClass::kSimplifiedChinese;
-    }
-
+// Classifies the ASCII range (< 0x80): hard line breaks, other control
+// characters, the halfwidth space and ASCII digits. Any remaining ASCII
+// (Latin letters, halfwidth punctuation) is not in the whitelist.
+static FastPathCharClass classifyAsciiFastPathChar(SkUnichar unicode) {
     // Hard line breaks (\n, \r) have no glyph of their own. They are transparent
     // to segmentation (see collectFastPathSegments) and attach to the adjacent
     // run, matching harfbuzz's control-codepoint handling.
@@ -4133,11 +4129,48 @@ FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
         return FastPathCharClass::kASCIIDigits;
     }
 
-    // Any remaining ASCII (Latin letters, halfwidth punctuation) is not in the
-    // whitelist; reject it before the emoji table so regular-path text does not
-    // pay the emoji lookup cost.
+    return FastPathCharClass::kUnsupported;
+}
+
+// Simplified chinese ranges: CJK Extension A, compat ideographs, CJK
+// punctuation/symbols and fullwidth forms. Latin/Greek/Cyrillic/general
+// punctuation/currency/math are excluded on purpose: they require shaping
+// (kerning/ligatures) that the fast path does not apply, which would
+// diverge from the harfbuzz result.
+static const SkRange<SkUnichar> kSimplifiedChineseRanges[] = {
+    {0x3000, 0x3029},  // CJK punctuation (excl. 302A-302F tone marks)
+    {0x3030, 0x303F},  // CJK symbols (3030/303D are emoji, caught earlier)
+    {0x3400, 0x4DBF},  // CJK Extension A
+    {0x4E00, 0x9FFF},  // CJK Unified Ideographs (hot path in classifyFastPathChar)
+    {0xF900, 0xFAFF},  // CJK Compat Ideographs
+    {0xFF00, 0xFF60},  // Fullwidth Forms
+};
+
+// True when unicode falls into one of kSimplifiedChineseRanges. Emoji and
+// excluded brackets inside those ranges (3030/303D and the opening brackets)
+// are checked before this in classifyFastPathChar and take precedence.
+static bool isSimplifiedChineseCodepoint(SkUnichar unicode) {
+    auto it = std::lower_bound(
+        std::begin(kSimplifiedChineseRanges), std::end(kSimplifiedChineseRanges), unicode,
+        [](const SkRange<SkUnichar>& range, SkUnichar value) {
+            return range.end < value;
+        });
+    return it != std::end(kSimplifiedChineseRanges) && unicode >= it->start;
+}
+
+FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
+    // Hot path: CJK Unified Ideographs — the overwhelming majority of Chinese
+    // text. A single range check avoids walking the emoji whitelist first
+    // (all emoji codepoints live outside this range).
+    if (unicode >= 0x4E00 && unicode <= 0x9FFF) {
+        return FastPathCharClass::kSimplifiedChinese;
+    }
+
+    // Any remaining ASCII (control characters, line breaks, space, digits,
+    // Latin letters, halfwidth punctuation) is classified without the emoji
+    // table so regular-path text does not pay the emoji lookup cost.
     if (unicode < 0x80) {
-        return FastPathCharClass::kUnsupported;
+        return classifyAsciiFastPathChar(unicode);
     }
 
     // Emoji-presentation codepoints (BMP + SMP), resolved via a sorted range
@@ -4152,16 +4185,9 @@ FastPathCharClass ParagraphImpl::classifyFastPathChar(SkUnichar unicode) {
         return FastPathCharClass::kUnsupported;
     }
 
-    // Simplified chinese remainder: CJK Extension A, compat ideographs, CJK
-    // punctuation/symbols and fullwidth forms. Latin/Greek/Cyrillic/general
-    // punctuation/currency/math are excluded on purpose: they require shaping
-    // (kerning/ligatures) that the fast path does not apply, which would
-    // diverge from the harfbuzz result. (3030/303D are caught by emoji above.)
-    if ((unicode >= 0x3400 && unicode <= 0x4DBF) ||             // CJK Extension A
-        (unicode >= 0xF900 && unicode <= 0xFAFF) ||             // CJK Compat Ideographs
-        (unicode >= 0x3000 && unicode <= 0x3029) ||             // CJK punctuation (excl. 302A-302F tone marks)
-        (unicode >= 0x3030 && unicode <= 0x303F) ||             // CJK symbols (3030/303D caught by emoji)
-        (unicode >= 0xFF00 && unicode <= 0xFF60)) {             // Fullwidth Forms
+    // Simplified chinese remainder, resolved like the emoji ranges above via
+    // a sorted range table with binary search.
+    if (isSimplifiedChineseCodepoint(unicode)) {
         return FastPathCharClass::kSimplifiedChinese;
     }
 
