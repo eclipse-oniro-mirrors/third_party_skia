@@ -48,6 +48,13 @@ public:
 
     const std::vector<SkString>& getDefaultFamilyNames() const { return fDefaultFamilyNames; }
 
+    // Theme font families registered by the platform text stack. While any of
+    // them is active, the default-family resolution matches them before the
+    // system defaults, so fast paths that resolve hard-coded system families
+    // must stay off (see ParagraphImpl::tryShapeFastPath).
+    void setThemeFamilyNames(const std::vector<SkString>& themeFamilyNames);
+    bool hasThemeFont() const;
+
     std::vector<std::shared_ptr<RSTypeface>> findTypefaces(
         const std::vector<SkString>& familyNames, RSFontStyle fontStyle);
     std::vector<std::shared_ptr<RSTypeface>> findTypefaces(
@@ -162,6 +169,7 @@ private:
     std::shared_ptr<RSFontMgr> fAssetFontManager{nullptr};
     std::shared_ptr<RSFontMgr> fDynamicFontManager{nullptr};
     std::shared_ptr<RSFontMgr> fTestFontManager{nullptr};
+    std::vector<SkString> fThemeFamilyNames;
 #else
     skia_private::THashMap<FamilyKey, std::vector<sk_sp<SkTypeface>>, FamilyKey::Hasher> fTypefaces;
     sk_sp<SkFontMgr> fDefaultFontManager;
