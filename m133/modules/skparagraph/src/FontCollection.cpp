@@ -109,6 +109,16 @@ void FontCollection::setDefaultFontManager(std::shared_ptr<RSFontMgr> fontManage
     fDefaultFontManager = std::move(fontManager);
     fDefaultFamilyNames = defaultFamilyNames;
 }
+
+void FontCollection::setThemeFamilyNames(const std::vector<SkString>& themeFamilyNames) {
+    std::unique_lock<std::shared_mutex> writeLock(mutex_);
+    fThemeFamilyNames = themeFamilyNames;
+}
+
+bool FontCollection::hasThemeFont() const {
+    std::shared_lock<std::shared_mutex> readLock(mutex_);
+    return !fThemeFamilyNames.empty();
+}
 #else
 void FontCollection::setAssetFontManager(sk_sp<SkFontMgr> font_manager) {
     fAssetFontManager = std::move(font_manager);

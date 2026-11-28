@@ -1816,6 +1816,14 @@ void ParagraphImpl::markClusterBorder(Cluster& cluster, Run& run, BorderMarkStat
 // (or ineligibility) any partially shaped runs are rolled back and the shaper
 // is reset so the caller can fall back to harfbuzz.
 bool ParagraphImpl::tryShapeFastPath(OneLineShaper& oneLineShaper) {
+    // The fast path resolves every segment with a hard-coded system family and
+    // has no candidate iteration, so it would skip the theme font families
+    // that the default-family resolution matches first on the harfbuzz path.
+    // Fall back to harfbuzz while a theme font is active so theme font
+    // matching keeps working.
+    if (fFontCollection->hasThemeFont()) {
+        return false;
+    }
     if (fPlaceholders.size() != 1 || fBidiRegions.size() > 1) {
         return false;
     }
